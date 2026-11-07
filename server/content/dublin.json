@@ -1,0 +1,261 @@
+{
+ "_note": "Hand-typed, approximate. Replace with OpenStreetMap amenity=pub data.",
+ "starts": {
+  "trinity": {
+   "name": "Trinity Front Gate",
+   "lat": 53.3445,
+   "lng": -6.2591
+  },
+  "green": {
+   "name": "Top of Grafton St",
+   "lat": 53.3399,
+   "lng": -6.2609
+  },
+  "templebar": {
+   "name": "Temple Bar Square",
+   "lat": 53.3453,
+   "lng": -6.264
+  },
+  "camden": {
+   "name": "Camden St",
+   "lat": 53.336,
+   "lng": -6.2652
+  }
+ },
+ "pubs": [
+  {
+   "name": "Kennedy's",
+   "street": "Westland Row",
+   "lat": 53.3425,
+   "lng": -6.2497
+  },
+  {
+   "name": "Lincoln's Inn",
+   "street": "Lincoln Place",
+   "lat": 53.3418,
+   "lng": -6.2509
+  },
+  {
+   "name": "The Pavilion Bar (Pav)",
+   "street": "Trinity College",
+   "lat": 53.3437,
+   "lng": -6.2532
+  },
+  {
+   "name": "The Ginger Man",
+   "street": "Fenian St",
+   "lat": 53.3412,
+   "lng": -6.2475
+  },
+  {
+   "name": "O'Donoghue's",
+   "street": "Merrion Row",
+   "lat": 53.3381,
+   "lng": -6.2551
+  },
+  {
+   "name": "Doheny & Nesbitt",
+   "street": "Lower Baggot St",
+   "lat": 53.3375,
+   "lng": -6.2487
+  },
+  {
+   "name": "Toners",
+   "street": "Lower Baggot St",
+   "lat": 53.3368,
+   "lng": -6.2475
+  },
+  {
+   "name": "Hartigan's",
+   "street": "Leeson St Lower",
+   "lat": 53.3343,
+   "lng": -6.2554
+  },
+  {
+   "name": "Neary's",
+   "street": "Chatham St",
+   "lat": 53.3405,
+   "lng": -6.261
+  },
+  {
+   "name": "Davy Byrnes",
+   "street": "Duke St",
+   "lat": 53.3413,
+   "lng": -6.2598
+  },
+  {
+   "name": "The Bailey",
+   "street": "Duke St",
+   "lat": 53.3413,
+   "lng": -6.2594
+  },
+  {
+   "name": "The Duke",
+   "street": "Duke St",
+   "lat": 53.3414,
+   "lng": -6.259
+  },
+  {
+   "name": "Kehoe's",
+   "street": "South Anne St",
+   "lat": 53.341,
+   "lng": -6.2603
+  },
+  {
+   "name": "McDaid's",
+   "street": "Harry St",
+   "lat": 53.3408,
+   "lng": -6.2618
+  },
+  {
+   "name": "Bruxelles",
+   "street": "Harry St",
+   "lat": 53.341,
+   "lng": -6.2615
+  },
+  {
+   "name": "The Dawson Lounge",
+   "street": "Dawson St",
+   "lat": 53.3398,
+   "lng": -6.2589
+  },
+  {
+   "name": "Grogan's",
+   "street": "South William St",
+   "lat": 53.3418,
+   "lng": -6.2628
+  },
+  {
+   "name": "The Long Hall",
+   "street": "South Great George's St",
+   "lat": 53.3417,
+   "lng": -6.2649
+  },
+  {
+   "name": "Hogan's",
+   "street": "South Great George's St",
+   "lat": 53.3428,
+   "lng": -6.2646
+  },
+  {
+   "name": "The Old Stand",
+   "street": "Exchequer St",
+   "lat": 53.3427,
+   "lng": -6.2622
+  },
+  {
+   "name": "Sinnott's",
+   "street": "South King St",
+   "lat": 53.3398,
+   "lng": -6.262
+  },
+  {
+   "name": "Peter's Pub",
+   "street": "Johnson's Place",
+   "lat": 53.3399,
+   "lng": -6.2632
+  },
+  {
+   "name": "The Hairy Lemon",
+   "street": "Stephen St Lower",
+   "lat": 53.3405,
+   "lng": -6.265
+  },
+  {
+   "name": "The Stag's Head",
+   "street": "Dame Court",
+   "lat": 53.3434,
+   "lng": -6.2648
+  },
+  {
+   "name": "O'Neill's",
+   "street": "Suffolk St",
+   "lat": 53.3436,
+   "lng": -6.2603
+  },
+  {
+   "name": "The Bank on College Green",
+   "street": "College Green",
+   "lat": 53.3443,
+   "lng": -6.2615
+  },
+  {
+   "name": "The Palace Bar",
+   "street": "Fleet St",
+   "lat": 53.3459,
+   "lng": -6.2598
+  },
+  {
+   "name": "Mulligan's",
+   "street": "Poolbeg St",
+   "lat": 53.3466,
+   "lng": -6.2566
+  },
+  {
+   "name": "The Temple Bar",
+   "street": "Temple Bar",
+   "lat": 53.3455,
+   "lng": -6.2643
+  },
+  {
+   "name": "The Oliver St. John Gogarty",
+   "street": "Fleet St / Anglesea St",
+   "lat": 53.3457,
+   "lng": -6.2612
+  },
+  {
+   "name": "The Ha'penny Bridge Inn",
+   "street": "Wellington Quay",
+   "lat": 53.3456,
+   "lng": -6.263
+  },
+  {
+   "name": "The Porterhouse",
+   "street": "Parliament St",
+   "lat": 53.3452,
+   "lng": -6.2683
+  },
+  {
+   "name": "The Lord Edward",
+   "street": "Christchurch Place",
+   "lat": 53.343,
+   "lng": -6.27
+  },
+  {
+   "name": "The Brazen Head",
+   "street": "Bridge St Lower",
+   "lat": 53.3446,
+   "lng": -6.2764
+  },
+  {
+   "name": "The Swan",
+   "street": "Aungier St",
+   "lat": 53.3393,
+   "lng": -6.2655
+  },
+  {
+   "name": "Cassidy's",
+   "street": "Camden St Lower",
+   "lat": 53.3376,
+   "lng": -6.2656
+  },
+  {
+   "name": "Against the Grain",
+   "street": "Wexford St",
+   "lat": 53.3368,
+   "lng": -6.2657
+  },
+  {
+   "name": "Whelan's",
+   "street": "Wexford St",
+   "lat": 53.3364,
+   "lng": -6.2654
+  },
+  {
+   "name": "The Bleeding Horse",
+   "street": "Camden St Upper",
+   "lat": 53.3338,
+   "lng": -6.2649
+  }
+ ]
+}

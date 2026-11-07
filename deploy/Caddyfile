@@ -1,0 +1,11 @@
+# Caddy gets and renews the HTTPS certificate automatically and passes WebSockets through.
+# setup.sh copies this to /etc/caddy/Caddyfile (swapping in your domain if it isn't 12pubs.ie).
+
+www.12pubs.ie {
+	redir https://12pubs.ie{uri} permanent
+}
+
+12pubs.ie {
+	encode zstd gzip
+	reverse_proxy localhost:3000
+}
