@@ -12,6 +12,9 @@ const clean = (s, max) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, m
 const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
 const validEmoji = (e) => (G.EMOJIS.includes(e) ? e : null);
 const MAX_FEED = 80;
+export const MAX_PLAYERS = 50;
+const SAME_REPORTER_MS = 60000; // one person can only report the same person once a minute
+const JUST_CAUGHT_MS = 10000;   // two mates tapping at once only counts once
 
 /* ---------- creating a room ---------- */
 export function createRoomState(code, input = {}, rng = Math.random) {
@@ -26,15 +29,15 @@ export function createRoomState(code, input = {}, rng = Math.random) {
   };
   if (!settings.cats.length) settings.cats = G.CATS.slice();
 
-  // Players: 2-12 unique names
+  // Players: the host to start with, then everyone joins with the code (MAX_PLAYERS at most)
   // Each player is a name, or { n, emoji }
   const seen = {};
   const people = (Array.isArray(input.players) ? input.players : [])
     .map((p) => (typeof p === "string" ? { n: p } : p && typeof p === "object" ? p : {}))
     .map((p) => ({ n: clean(p.n, 14), emoji: validEmoji(p.emoji) }))
-    .filter((p) => p.n).slice(0, 12)
+    .filter((p) => p.n).slice(0, MAX_PLAYERS)
     .map((p) => { const k = p.n.toLowerCase(); seen[k] = (seen[k] || 0) + 1; return seen[k] > 1 ? { ...p, n: `${p.n} ${seen[k]}` } : p; });
-  if (people.length < 2) fail("Add at least two names");
+  if (people.length < 1) fail("Add your name");
   const players = people.map((p, i) => ({ id: "p" + i, n: p.n, emoji: p.emoji, c: G.COLORS[i % G.COLORS.length], tokens: settings.tokens, forf: 0, skips: 0, chall: 0, claimToken: null, mission: null, joinedPub: 0, leftPub: null }));
 
   // Pubs: up to 12 given, the rest are "Pub n" to be named on the night
@@ -49,7 +52,7 @@ export function createRoomState(code, input = {}, rng = Math.random) {
   const state = {
     code, hostToken: newToken(), createdAt: now, updatedAt: now,
     phase: "plan", settings, players, plan: G.buildPlan(settings, pubs, rng),
-    pub: -1, forfeits: [], feed: [], startAt: null, endAt: null, nextId: 1,
+    pub: -1, forfeits: [], catches: [], feed: [], startAt: null, endAt: null, nextId: 1,
     plants: [], // surprises people plant before the night (see "Plant a surprise" below)
   };
   if (settings.missions) players.forEach((p) => (p.mission = G.dealMission(players, p.n, null, rng)));
@@ -62,6 +65,7 @@ export function publicState(state) {
   return {
     code: state.code, phase: state.phase, settings: state.settings, pub: state.pub, expiresAt: state.expiresAt || null,
     startAt: state.startAt, endAt: state.endAt, feed: state.feed, forfeits: state.forfeits,
+    catches: (state.catches || []).filter((c) => !c.removed).slice(0, 30).map((c) => ({ id: c.id, playerId: c.playerId, n: c.n, by: c.by, pub: c.pub })),
     players: state.players.map((p) => ({
       id: p.id, n: p.n, c: p.c, emoji: p.emoji || null, tokens: p.tokens, forf: p.forf, skips: p.skips, chall: p.chall,
       claimed: !!p.claimToken, missionSeen: !!(p.mission && p.mission.seen),
@@ -182,6 +186,7 @@ export const HOST_ACTIONS = {
   },
   start(state) {
     needPhase(state, "plan");
+    if (state.players.length < 2) fail("Wait for at least one more person to join");
     state.startAt = Date.now();
     if (state.settings.missions) { state.phase = "missions"; return {}; }
     state.phase = "live"; arrive(state, 0); return { schedule: true };
@@ -232,33 +237,24 @@ export const HOST_ACTIONS = {
     return {};
   },
   caught(state, { playerId }) {
-    needPhase(state, "live");
-    if (current(state).type !== "rule") fail("No rules at this stop 🙂");
-    const pl = player(state, playerId);
-    if (!isHere(state, pl)) fail(`${pl.n} has headed home`);
-    pl.forf++; current(state).forf++;
-    const r = current(state).rule;
-    if (r && r.plantId) { const x = state.plants.find((y) => y.id === r.plantId); if (x) x.breaks++; } // counts for whoever planted it
-    const f = G.pickForfeit(state.settings);
-    state.forfeits.unshift({ id: state.nextId++, playerId: pl.id, n: pl.n, text: f.text, int: f.int, fid: f.id, rerolled: false });
-    feed(state, pl.n, `got caught: ${f.text}`);
-    return { buzz: { kind: "forfeit", playerId: pl.id } };
+    return recordCatch(state, playerId, null);
+  },
+  // A catch was wrong, or someone was messing: take it back and put every count right
+  removeCatch(state, { id }) {
+    needPhase(state, "live", "reveal");
+    const c = (state.catches || []).find((x) => x.id === id && !x.removed) || fail("That one's already gone");
+    const pl = player(state, c.playerId);
+    c.removed = true;
+    pl.forf = Math.max(0, pl.forf - 1);
+    state.plan[c.pub].forf = Math.max(0, (state.plan[c.pub].forf || 0) - 1);
+    if (c.plantId) { const x = state.plants.find((y) => y.id === c.plantId); if (x) x.breaks = Math.max(0, x.breaks - 1); }
+    if (c.skipped) { pl.tokens++; pl.skips = Math.max(0, pl.skips - 1); }
+    state.forfeits = state.forfeits.filter((f) => f.catchId !== c.id);
+    feed(state, pl.n, "had a forfeit taken back ↩️");
+    return {};
   },
   forfeit(state, { id, action }) {
-    needPhase(state, "live");
-    const k = state.forfeits.findIndex((f) => f.id === id);
-    if (k < 0) fail("That forfeit's gone");
-    const f = state.forfeits[k], pl = player(state, f.playerId);
-    if (action === "done") { state.forfeits.splice(k, 1); feed(state, pl.n, "did the forfeit ✅"); }
-    else if (action === "skip") {
-      if (pl.tokens < 1) fail("No skip tokens left");
-      pl.tokens--; pl.skips++; state.forfeits.splice(k, 1); feed(state, pl.n, "used a skip token 🎟");
-    } else if (action === "reroll") {
-      if (f.rerolled) fail("Already re-rolled once");
-      const nf = G.pickForfeit(state.settings, f.int, f.fid); // same intensity or harder
-      Object.assign(f, { text: nf.text, int: nf.int, fid: nf.id, rerolled: true });
-      feed(state, null, `🎲 Re-rolled ${pl.n}'s forfeit: ${nf.text}`);
-    } else fail("Unknown action");
+    applyForfeit(state, id, action);
     return {};
   },
   finish(state) {
@@ -364,10 +360,67 @@ export function setEmoji(state, playerId, emoji) {
   pl.emoji = emoji;
 }
 
+/* ---------- catches ---------- */
+function recordCatch(state, playerId, by) {
+  needPhase(state, "live");
+  if (current(state).type !== "rule") fail("No rules at this stop 🙂");
+  const pl = player(state, playerId);
+  if (!isHere(state, pl)) fail(`${pl.n} has headed home`);
+  pl.forf++; current(state).forf++;
+  const r = current(state).rule;
+  let plantId = null;
+  if (r && r.plantId) { const x = state.plants.find((y) => y.id === r.plantId); if (x) { x.breaks++; plantId = x.id; } } // counts for whoever planted it
+  const f = G.pickForfeit(state.settings);
+  const c = { id: state.nextId++, playerId: pl.id, n: pl.n, by: by ? by.n : null, byId: by ? by.id : null, pub: state.pub, plantId, at: Date.now(), removed: false, skipped: false };
+  (state.catches ||= []).unshift(c);
+  state.forfeits.unshift({ id: state.nextId++, catchId: c.id, playerId: pl.id, n: pl.n, by: c.by, text: f.text, int: f.int, fid: f.id, rerolled: false });
+  feed(state, pl.n, by && by.id !== pl.id ? `got caught by ${by.n}: ${f.text}` : `got caught: ${f.text}`);
+  return { buzz: { kind: "forfeit", playerId: pl.id } };
+}
+// Anyone playing can report a catch from their own phone
+export function reportCatch(state, reporterId, playerId) {
+  const by = player(state, reporterId), pl = player(state, playerId), now = Date.now();
+  if (!isHere(state, by)) fail("You've headed home");
+  for (const c of state.catches || []) {
+    if (c.playerId !== pl.id) continue;
+    if (!c.removed && now - c.at < JUST_CAUGHT_MS) fail(`${pl.n} has just been caught`);
+    if (c.byId === by.id && now - c.at < SAME_REPORTER_MS) fail(`You only caught ${pl.n} a minute ago`);
+  }
+  return recordCatch(state, playerId, by);
+}
+function applyForfeit(state, id, action) {
+  needPhase(state, "live");
+  const k = state.forfeits.findIndex((f) => f.id === id);
+  if (k < 0) fail("That forfeit's gone");
+  const f = state.forfeits[k], pl = player(state, f.playerId);
+  if (action === "done") { state.forfeits.splice(k, 1); feed(state, pl.n, "did the forfeit ✅"); }
+  else if (action === "skip") {
+    if (pl.tokens < 1) fail("No skip tokens left");
+    pl.tokens--; pl.skips++; state.forfeits.splice(k, 1); feed(state, pl.n, "used a skip token 🎟");
+    const c = (state.catches || []).find((x) => x.id === f.catchId); if (c) c.skipped = true;
+  } else if (action === "reroll") {
+    if (f.rerolled) fail("Already re-rolled once");
+    const nf = G.pickForfeit(state.settings, f.int, f.fid); // same intensity or harder
+    Object.assign(f, { text: nf.text, int: nf.int, fid: nf.id, rerolled: true });
+    feed(state, null, `🎲 Re-rolled ${pl.n}'s forfeit: ${nf.text}`);
+  } else fail("Unknown action");
+}
+// People handle their own forfeits from their own phone
+export function ownForfeit(state, playerId, id, action) {
+  const f = state.forfeits.find((x) => x.id === id) || fail("That forfeit's gone");
+  if (f.playerId !== playerId) fail("That's not your forfeit");
+  applyForfeit(state, id, action);
+}
+
 /* ---------- comings and goings ---------- */
+export function selfJoin(state, name) {
+  const pl = addPlayer(state, name, null);
+  pl.claimToken = newToken();
+  return pl;
+}
 export function addPlayer(state, name, emoji) {
   if (!["plan", "missions", "live"].includes(state.phase)) fail("Not right now");
-  if (state.players.length >= 12) fail("12 players max");
+  if (state.players.length >= MAX_PLAYERS) fail(`${MAX_PLAYERS} players max`);
   let n = clean(name, 14);
   if (!n) fail("Give them a name");
   const taken = new Set(state.players.map((p) => p.n.toLowerCase()));

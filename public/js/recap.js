@@ -35,12 +35,6 @@ export function displayName(S, n, hide) {
 }
 
 /* ---------------- numbers ---------------- */
-function dist(a, b) {
-  const R = 6371000, r = (x) => (x * Math.PI) / 180, dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
 export function nightStats(S) {
   const visited = S.plan.map((p, i) => ({ ...p, i })).filter((p) => p.arrivedAt);
   const end = S.endAt || Date.now();
@@ -51,12 +45,6 @@ export function nightStats(S) {
   const worst = rulePubs.reduce((a, b) => ((b.forf || 0) > (a ? a.forf || 0 : 0) ? b : a), null);
   let challenges = 0;
   for (const p of visited) for (const c of [p.arrive, p.drop]) if (c && c.state === "done") challenges++;
-  let km = null;
-  if (visited.length > 1 && visited.every((p) => typeof p.lat === "number" && typeof p.lng === "number")) {
-    let m = 0;
-    for (let k = 1; k < visited.length; k++) m += dist(visited[k - 1], visited[k]);
-    km = +((m * 1.35) / 1000).toFixed(1);
-  }
   const plants = (S.plants || []).filter((x) => x.status === "approved");
   return {
     visited: visited.length,
@@ -65,24 +53,36 @@ export function nightStats(S) {
     out: S.startAt ? end - S.startAt : 0,
     forfeits: S.players.reduce((a, p) => a + p.forf, 0),
     skips: S.players.reduce((a, p) => a + p.skips, 0),
-    challenges, km, longest, quickest,
+    challenges, longest, quickest,
     ruleThatGotYou: worst && worst.forf ? { text: worst.rule.text, pub: worst.name, n: worst.forf } : null,
   };
 }
 
+// When people are level, say so rather than naming whoever's first in the list
+function winners(names, total, val, unit) {
+  const k = names.length, stat = plural(val, unit);
+  if (k === 1) return { n: names[0], d: stat };
+  if (k === 2) return { n: names.join(" & "), d: `${stat} each` };
+  return { n: k === total ? "Everyone" : `${k}-way tie`, d: k === total ? `${stat} each` : `${stat} each: ${names.join(", ")}` };
+}
 export function awards(S, hide) {
   const ps = S.players, label = (n) => displayName(S, n, hide);
-  const most = ps.slice().sort((a, b) => b.forf - a.forf)[0];
+  const level = (list, k, v) => list.filter((p) => p[k] === v);
+  const topForf = Math.max(...ps.map((p) => p.forf));
   // cleanest record only counts people who were there for at least half the night
   const visited = S.plan.filter((x) => x.arrivedAt).length;
   const stayers = ps.filter((p) => attended(S, p) >= Math.ceil(visited / 2));
-  const clean = (stayers.length ? stayers : ps).slice().sort((a, b) => a.forf - b.forf)[0];
-  const skipper = ps.slice().sort((a, b) => b.skips - a.skips)[0];
-  const messy = S.plan.slice().sort((a, b) => (b.forf || 0) - (a.forf || 0))[0];
+  const pool = stayers.length ? stayers : ps, lowForf = Math.min(...pool.map((p) => p.forf));
+  const topSkips = Math.max(...ps.map((p) => p.skips));
+  const topPub = Math.max(...S.plan.map((p) => p.forf || 0)), messy = S.plan.filter((p) => (p.forf || 0) === topPub);
+  const namesOf = (list) => list.map((p) => label(p.n));
+  const worst = winners(namesOf(level(ps, "forf", topForf)), ps.length, topForf, "forfeit");
+  const cleanest = winners(namesOf(level(pool, "forf", lowForf)), pool.length, lowForf, "forfeit");
+  const pubs = winners(messy.map((p) => p.name), S.plan.length, topPub, "forfeit");
   const list = [
-    { t: "Most forfeits", n: most.forf ? label(most.n) : "Nobody", d: most.forf ? plural(most.forf, "forfeit") : "A clean night?!" },
-    { t: "Cleanest record", n: label(clean.n), d: plural(clean.forf, "forfeit") },
-    { t: "Messiest pub", n: messy.forf ? messy.name : "None", d: messy.forf ? plural(messy.forf, "forfeit") + " handed out" : "Saints, all of you" },
+    { t: "Most forfeits", ...(topForf ? worst : { n: "Nobody", d: "A clean night?!" }) },
+    { t: "Cleanest record", ...cleanest },
+    { t: "Messiest pub", ...(topPub ? (messy.length === 1 ? { n: messy[0].name, d: plural(topPub, "forfeit") + " handed out" } : pubs) : { n: "None", d: "Saints, all of you" }) },
   ];
   if (S.settings.missions) {
     const done = ps.filter((p) => p.mission && p.mission.result === true).map((p) => label(p.n));
@@ -90,27 +90,111 @@ export function awards(S, hide) {
       n: done.length ? (done.length <= 2 ? done.join(" & ") : `${done.length} of ${ps.length}`) : "Nobody",
       d: done.length > 2 ? done.join(", ") : done.length ? `${done.length} of ${ps.length} missions done` : "Every mission failed" });
   } else {
-    list.push({ t: "Escape artist", n: skipper.skips ? label(skipper.n) : "Nobody", d: skipper.skips ? plural(skipper.skips, "skip token") + " used" : "Nobody bottled it" });
+    list.push({ t: "Escape artist", ...(topSkips ? winners(namesOf(level(ps, "skips", topSkips)), ps.length, topSkips, "skip token") : { n: "Nobody", d: "Nobody bottled it" }) });
   }
   return list;
 }
 
 /* ---------------- a title for everyone ---------------- */
-const TITLES = {
-  menace:  { em: "😈", t: "The Menace", d: "Caught more than anyone. Rules were more of a suggestion." },
-  escape:  { em: "🎟", t: "The Escape Artist", d: "Burned the most skip tokens. Slippery." },
-  game:    { em: "🎯", t: "Up For Anything", d: "Did the most challenges. Absolute legend." },
-  saint:   { em: "😇", t: "The Saint", d: "Not caught once all night. Suspicious, honestly." },
-  early:   { em: "🛌", t: "The Early Exit", d: "Tapped out early. Respect." },
-  late:    { em: "⏰", t: "The Late Arrival", d: "Turned up late and still made it count." },
-  mastermind: { em: "🎁", t: "The Mastermind", d: "Planted the surprise that caught the most people. Evil." },
-  agent:   { em: "🕵️", t: "Secret Agent", d: "Pulled off the secret mission without getting rumbled." },
-  chaos:   { em: "🌪️", t: "Chaos Merchant", d: "Caught more than most. Kept the night interesting." },
-  steady:  { em: "🧘", t: "Steady Hand", d: "Kept the head. Mostly." },
-  wild:    { em: "🃏", t: "The Wildcard", d: "Impossible to predict. Kept everyone guessing." },
-  main:    { em: "🌟", t: "Main Character", d: "The night revolved around you. Obviously." },
-  legend:  { em: "🍻", t: "The Legend", d: "Made it the whole way. Respect." },
+export const TITLES = {
+  menace:  { em: "🚨", t: "Known to Gardaí", d: [
+    "Caught more than anyone. Investigations are ongoing.",
+    "{caught}. A tribunal will report back in 2041.",
+    "{caught}. Still cost the taxpayer less than the bike shed.",
+    "{caught}. Still more accountable than the Dáil.",
+    "{caught}. Gardaí appealed for witnesses. Nobody came forward.",
+  ] },
+  escape:  { em: "🏝️", t: "The Tax Exile", d: [
+    "Burned the most skip tokens. Contributed nothing.",
+    "{skips} used. Effective forfeit rate: 12.5%.",
+    "Has a letterbox in Luxembourg and no forfeits.",
+    "Paid nothing, owes nothing, lives in Monaco now.",
+    "Dodged more than a Revenue audit.",
+  ] },
+  game:    { em: "👍", t: "Yes Man", d: [
+    "Did the most challenges. Couldn't say no.",
+    "{chall}. Would've signed off the Children's Hospital budget too.",
+    "{chall}. Says yes like a councillor at a planning meeting.",
+    "{chall} done, unpaid. Should've joined a union.",
+    "Never once said no. Someone check on this person.",
+  ] },
+  saint:   { em: "😇", t: "Airtight Alibi", d: [
+    "Not caught once all night. Suspicious, honestly.",
+    "Caught 0 times. Either a saint or has a very good PR firm.",
+    "Caught 0 times. An internal review found no wrongdoing.",
+    "Caught 0 times. Cleared by an inquiry they set up themselves.",
+    "Caught 0 times. The files were lost in a flood.",
+  ] },
+  early:   { em: "🧳", t: "The Emigrant", d: [
+    "Left after pub {pub}. Still talked about.",
+    "Left after pub {pub}. Couldn't afford the rent here either.",
+    "Left after pub {pub}. Living in Sydney now and won't shut up about it.",
+    "Left after pub {pub}. Their mam is devastated.",
+    "Gone after pub {pub}. Back at Christmas to complain about the prices.",
+  ] },
+  late:    { em: "✈️", t: "The Returned Yank", d: [
+    "Turned up at pub {pub}, acting like they never left.",
+    "Landed at pub {pub}. Asked where the leprechauns were.",
+    "Turned up at pub {pub}. Great-grandmother was from here, apparently.",
+    "Arrived at pub {pub}. Tried to tip the barman and caused an incident.",
+  ] },
+  mastermind: { em: "🌱", t: "Green Fingers", d: [
+    "Planted the surprise that caught the most people.",
+    "Planted the evidence. Nobody can prove it.",
+    "Planted it, watered it, denied all knowledge.",
+    "Planted a surprise. Planning permission pending since 2019.",
+  ] },
+  agent:   { em: "🕵️", t: "Keyser Söze", d: [
+    "Pulled off the secret mission. And like that, gone.",
+    "Pulled off the secret mission. Would make a great Special Adviser.",
+    "Mission complete. No paper trail, no receipts, no comment.",
+    "Mission complete. Has declined to come before the committee.",
+  ] },
+  chaos:   { em: "🕺", t: "Uncle at a Wedding", d: [
+    "Caught more than most. Someone find them a chair.",
+    "{caught}. Has opinions on the government and will share them.",
+    "{caught}. Gave a speech nobody asked for.",
+    "{caught}. Currently explaining the housing crisis to a stranger.",
+  ] },
+  steady:  { em: "🦺", t: "The Designated Adult", d: [
+    "Kept the head. Mostly.",
+    "Kept the head. In this economy.",
+    "Kept the head. Somebody has to, the government won't.",
+    "Knows where everyone's coat is. Deserves a State funeral.",
+    "Minded everyone all night, unpaid, like a student nurse.",
+  ] },
+  wild:    { em: "🌦️", t: "Irish Weather", d: [
+    "Four seasons in one night. Kept everyone guessing.",
+    "Went Status Orange without warning.",
+    "Forecast said dry. Forecast was wrong.",
+    "Bright spells, scattered showers, one incident outside a chipper.",
+    "Caused more cancellations than Dublin Bus.",
+  ] },
+  main:    { em: "🎩", t: "Mayor of the Smoking Area", d: [
+    "Knew everyone out there by the end of the night.",
+    "Knew everyone out there. Has promised them all a house.",
+    "Elected by acclaim. Promised to fix the queue for the jacks. Didn't.",
+    "Ran on a platform of 'lend us a lighter'.",
+    "Not one of their promises will survive till morning.",
+  ] },
+  legend:  { em: "🦪", t: "Molly Malone", d: [
+    "Made it the whole way. Alive, alive-oh.",
+    "Made it the whole way, like a HSE waiting list.",
+    "Made it the whole way. Faster than the Luas to Finglas.",
+    "Survived all of it. The Children's Hospital still isn't finished.",
+  ] },
 };
+// Same line on everyone's phone and every redraw, but different from night to night
+export function titleLine(S, p, key) {
+  const lines = TITLES[key].d;
+  let h = 0;
+  for (const c of `${S.code || ""}|${p.id}|${key}`) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  return lines[h % lines.length]
+    .replace("{caught}", `Caught ${plural(p.forf, "time")}`)
+    .replace("{skips}", plural(p.skips, "skip token"))
+    .replace("{chall}", plural(p.chall, "challenge"))
+    .replace("{pub}", String((key === "early" ? p.leftPub : p.joinedPub) + 1));
+}
 // Everyone gets a title. Each person takes the first one that fits them and that nobody has yet,
 // so a group of 5 usually gets 5 different titles.
 export function titles(S) {
@@ -135,8 +219,7 @@ export function titles(S) {
   for (const p of order) {
     const opts = fits(p), pick = opts.find((k) => !used.has(k)) || opts[0];
     used.add(pick);
-    out[p.id] = pick === "early" ? { ...TITLES.early, d: `Tapped out after pub ${p.leftPub + 1}. Respect.` }
-      : pick === "late" ? { ...TITLES.late, d: `Turned up at pub ${p.joinedPub + 1} and still made it count.` } : TITLES[pick];
+    out[p.id] = { ...TITLES[pick], d: titleLine(S, p, pick) };
   }
   return out;
 }
@@ -161,6 +244,7 @@ export function recapText(S, hide) {
 }
 
 /* ---------------- drawing ---------------- */
+const BIG_GROUP = 12; // above this the recap only shows the extremes
 const W = 1080, H = 1920, INK = "#17171a", CREAM = "#fff7e8", WHITE = "#ffffff";
 const F = (w, s, fam = "Fredoka") => `${w} ${s}px ${fam}, "Arial Rounded MT Bold", system-ui, sans-serif`;
 
@@ -214,6 +298,22 @@ function canvas(bg) {
       else g.text(face.letter, X, Y + r * 0.36, F(700, r), INK, "center");
       x.lineWidth = 6; x.strokeStyle = INK; x.beginPath(); x.arc(X, Y, r, 0, 7); x.stroke();
     },
+    // Scattered confetti shapes for background interest — seeded so slides look identical every render
+    confetti(colors, density = 50, seed = 0) {
+      let s = (seed * 1664525 + 1013904223) | 0;
+      const rng = () => { s = (Math.imul(s, 1664525) + 1013904223) | 0; return (s >>> 0) / 4294967296; };
+      for (let i = 0; i < density; i++) {
+        const px = rng() * W, py = rng() * H, size = 10 + rng() * 22, angle = rng() * Math.PI * 2;
+        const type = i % 3; // circle, wide rect, tall rect
+        x.save(); x.globalAlpha = 0.11 + rng() * 0.11;
+        x.fillStyle = colors[Math.floor(rng() * colors.length)];
+        x.translate(px, py); x.rotate(angle);
+        if (type === 0) { x.beginPath(); x.arc(0, 0, size / 2, 0, Math.PI * 2); x.fill(); }
+        else if (type === 1) { x.fillRect(-size / 2, -size / 4, size, size / 2); }
+        else { x.fillRect(-size / 4, -size / 2, size / 2, size); }
+        x.restore();
+      }
+    },
     // Every image carries the address, so anyone who sees a story knows where to go
     footer(t = "12pubs.ie") {
       x.font = F(700, 40); const w = x.measureText(t).width + 60;
@@ -230,6 +330,7 @@ const faceOf = (S, p, i, hide) => hide ? { letter: String(i + 1) } : FACES[p.id]
 
 function slideCover(S, hide) {
   const st = nightStats(S), g = canvas("#ff7eb6");
+  g.confetti([WHITE, "#ffd23f", "#6ea8ff", INK], 60, 1);
   g.logo(80, 90);
   const done = st.visited >= 12;
   const big = (t, y) => { let size = 150; while (size > 80) { g.x.font = F(700, size); if (g.x.measureText(t).width <= 920) break; size -= 6; } g.text(t, 80, y, F(700, size)); };
@@ -241,11 +342,13 @@ function slideCover(S, hide) {
   }
   // the gang
   const n = S.players.length, r = n > 8 ? 52 : n > 5 ? 64 : 80, gap = r * 2 + 26, perRow = Math.floor((W - 160) / gap);
-  S.players.forEach((p, i) => {
+  const faces = n > 14 ? 13 : n; // two rows is all that fits; the rest become "+36"
+  S.players.slice(0, faces).forEach((p, i) => {
     const row = Math.floor(i / perRow), col = i % perRow;
     const col_ = playerColor(i) === "#ff7eb6" ? WHITE : playerColor(i); // don't vanish into the pink cover
     g.avatar(80 + r + col * gap, 1040 + row * (gap + 10), r, col_, faceOf(S, p, i, hide));
   });
+  if (faces < n) g.avatar(80 + r + (faces % perRow) * gap, 1040 + Math.floor(faces / perRow) * (gap + 10), r, WHITE, { letter: `+${n - faces}` });
   g.box(80, 1460, 920, 240, 32, WHITE);
   g.text(duration(st.out), 130, 1580, F(700, 90));
   g.text(`out · ${n} of you · ${MODE_LABEL[S.settings.mode]}`, 130, 1645, F(700, 36, "Nunito"));
@@ -255,6 +358,7 @@ function slideCover(S, hide) {
 
 function slideRoute(S) {
   const g = canvas(CREAM);
+  g.confetti([INK, "#ff7eb6", "#ffd23f", "#6ea8ff"], 50, 4);
   g.sticker("THE ROUTE", 80, 90);
   const reached = S.plan.filter((p) => p.arrivedAt).length;
   g.text(reached >= 12 ? "12 pubs." : `${reached} of 12.`, 80, 280, F(700, 110));
@@ -274,13 +378,14 @@ function slideRoute(S) {
 
 function slideNumbers(S) {
   const st = nightStats(S), g = canvas("#6ea8ff");
+  g.confetti([WHITE, "#ffd23f", "#ff7eb6", INK], 50, 2);
   g.sticker("THE NUMBERS", 80, 90);
   g.text("The damage.", 80, 280, F(700, 110));
   const tiles = [
     [duration(st.out), "out"],
     [String(st.forfeits), "forfeits"],
     [String(st.challenges), "challenges done"],
-    [st.km != null ? `${st.km} km` : String(st.skips), st.km != null ? "walked" : "skip tokens used"],
+    [String(st.skips), "skip tokens used"],
   ];
   tiles.forEach(([big, small], k) => {
     const X = 80 + (k % 2) * 470, Y = 360 + Math.floor(k / 2) * 290;
@@ -289,15 +394,19 @@ function slideNumbers(S) {
     g.text(small, X + 36, Y + 200, F(700, 34, "Nunito"));
   });
   let y = 960;
-  const wide = (label, main, sub) => {
-    const lines = g.wrap(main, F(700, 50), 840, 2), h = 120 + lines.length * 62 + (sub ? 50 : 0);
+  const wide = (label, main, sub, maxLines = 2) => {
+    // shrink long text before cutting it off, so the punchline survives
+    let size = 50;
+    while (size > 34 && g.wrap(main, F(700, size), 840, 99).length > maxLines) size -= 4;
+    const font = F(700, size), lh = Math.round(size * 1.24);
+    const lines = g.wrap(main, font, 840, maxLines), h = 120 + lines.length * lh + (sub ? 50 : 0);
     g.box(80, y, 920, h, 30, "#ffd23f");
     g.text(label, 120, y + 66, F(700, 30));
-    lines.forEach((l, i) => g.text(l, 120, y + 136 + i * 62, F(700, 50)));
-    if (sub) g.text(sub, 120, y + 136 + lines.length * 62 + 4, F(700, 32, "Nunito"));
+    lines.forEach((l, i) => g.text(l, 120, y + 136 + i * lh, font));
+    if (sub) g.text(sub, 120, y + 136 + lines.length * lh + 4, F(700, 32, "Nunito"));
     y += h + 30;
   };
-  if (st.ruleThatGotYou) wide("THE RULE THAT GOT YOU", `“${st.ruleThatGotYou.text}”`, `${plural(st.ruleThatGotYou.n, "catch")} at ${st.ruleThatGotYou.pub}`);
+  if (st.ruleThatGotYou) wide("THE RULE THAT GOT YOU", `“${st.ruleThatGotYou.text}”`, `${plural(st.ruleThatGotYou.n, "catch")} at ${st.ruleThatGotYou.pub}`, 3);
   if (st.longest && y < 1500) wide("LONGEST STAY", st.longest.name, duration(st.longest.ms));
   if (st.quickest && y < 1500) wide("QUICKEST PINT", st.quickest.name, duration(st.quickest.ms));
   g.footer();
@@ -306,6 +415,7 @@ function slideNumbers(S) {
 
 function slideAwards(S, hide) {
   const g = canvas("#ffd23f");
+  g.confetti([WHITE, "#ff7eb6", "#6ea8ff", INK], 50, 3);
   g.sticker("THE AWARDS", 80, 90);
   g.text("And the winners…", 80, 280, F(700, 96));
   const colors = ["#ff7eb6", "#4ade80", "#ff8a3d", "#6ea8ff"];
@@ -322,12 +432,15 @@ function slideAwards(S, hide) {
 
 function slideMissions(S, hide) {
   const g = canvas("#b794f6");
+  g.confetti([WHITE, "#ffd23f", INK, "#ff7eb6"], 50, 5);
   g.sticker("🤫 SECRET MISSIONS", 80, 90);
   const done = S.players.filter((p) => p.mission && p.mission.result === true).length;
   g.text(`${done} of ${S.players.length} pulled it off.`, 80, 270, F(700, done >= 10 ? 76 : 86));
-  const n = S.players.length, top = 340, avail = H - top - 160, gap = 18, rowH = Math.min(260, (avail - gap * (n - 1)) / n);
+  // a big group only shows the ones who pulled it off
+  const rows = S.players.length > BIG_GROUP ? S.players.filter((p) => p.mission && p.mission.result === true).slice(0, 8) : S.players;
+  const n = rows.length, top = 340, avail = H - top - 160, gap = 18, rowH = Math.min(260, (avail - gap * (n - 1)) / n);
   const big = rowH > 170;
-  S.players.forEach((p, i) => {
+  rows.forEach((p, i) => {
     const y = top + i * (rowH + gap);
     g.box(80, y, 920, rowH, 26, WHITE, 6);
     const res = p.mission && p.mission.result === true ? "✅" : p.mission && p.mission.result === false ? "❌" : "–";
@@ -343,18 +456,20 @@ function slideMissions(S, hide) {
 
 function slideSurprises(S, hide) {
   const list = (S.plants || []).filter((x) => x.status === "approved"), g = canvas("#ff8a3d");
+  g.confetti([WHITE, "#ffd23f", INK, "#6ea8ff"], 50, 6);
   g.sticker("🎁 PLANTED SURPRISES", 80, 90);
   const caught = list.reduce((a, x) => a + (x.breaks || 0), 0);
-  g.text(caught ? `They caught ${caught}.` : "Sneaky.", 80, 270, F(700, 96));
-  const n = list.length, top = 330, gap = 22, rowH = Math.min(300, (H - top - 170 - gap * (n - 1)) / n);
-  list.forEach((x, k) => {
+  g.text(caught ? `${plural(caught, "catch")}.` : "Sneaky.", 80, 270, F(700, 96));
+  const rows = list.length > 5 ? list.slice().sort((a, b) => (b.breaks || 0) - (a.breaks || 0)).slice(0, 5) : list; // the five that did the most damage
+  const n = rows.length, top = 330, gap = 22, rowH = Math.min(300, (H - top - 170 - gap * (n - 1)) / n);
+  rows.forEach((x, k) => {
     const y = top + k * (rowH + gap);
     const who = hide ? "Player " + (S.players.findIndex((p) => p.id === x.by) + 1) : x.byName;
     g.box(80, y, 920, rowH, 28, WHITE, 6);
     g.text(g.fit(`${who}'s ${x.kind} · Pub ${x.pub + 1}`, F(700, 34), 820), 120, y + 56, F(700, 34));
     const lines = g.wrap(`“${x.text}”`, F(700, rowH > 220 ? 38 : 30, "Nunito"), 840, rowH > 220 ? 3 : 2);
     lines.forEach((l, j) => g.text(l, 120, y + 106 + j * (rowH > 220 ? 46 : 36), F(700, rowH > 220 ? 38 : 30, "Nunito")));
-    const res = !x.revealed ? "Never got its moment 😢" : x.kind === "rule" ? (x.breaks ? `Caught ${x.breaks} ${x.breaks === 1 ? "person" : "people"} 😈` : "Nobody got caught 😇") : x.state === "done" ? "Done ✅" : "Dodged 🫣";
+    const res = !x.revealed ? "Never got its moment 😢" : x.kind === "rule" ? (x.breaks ? `${plural(x.breaks, "catch")} 😈` : "Nobody got caught 😇") : x.state === "done" ? "Done ✅" : "Dodged 🫣";
     g.text(res, 120, y + rowH - 30, F(700, 30), "#a8322d");
   });
   g.footer();
@@ -364,6 +479,7 @@ function slideSurprises(S, hide) {
 function slidePlayer(S, p, i, hide) {
   const tt = titles(S)[p.id], name = displayName(S, p.n, hide), g = canvas(playerColor(i));
   const rank = 1 + S.players.filter((x) => x.forf > p.forf).length; // ties share a rank
+  g.confetti([WHITE, INK, "#ffd23f"], 45, i + 10);
   g.logo(80, 80, 0.62);
   g.sticker("MY 12 PUBS", 760 - 60, 108, WHITE, INK);
   g.avatar(W / 2, 470, 150, WHITE, faceOf(S, p, i, hide));
@@ -371,7 +487,10 @@ function slidePlayer(S, p, i, hide) {
   // the title
   g.box(80, 820, 920, 400, 36, WHITE);
   g.text(tt.em, W / 2, 960, F(700, 110), INK, "center");
-  g.text(g.fit(tt.t, F(700, 84), 840), W / 2, 1060, F(700, 84), INK, "center");
+  let titleSize = 84;
+  g.x.font = F(700, titleSize);
+  while (titleSize > 52 && g.x.measureText(tt.t).width > 840) { titleSize -= 4; g.x.font = F(700, titleSize); }
+  g.text(g.fit(tt.t, F(700, titleSize), 840), W / 2, 1060, F(700, titleSize), INK, "center");
   g.wrap(tt.d, F(700, 36, "Nunito"), 820, 2).forEach((l, k) => g.text(l, W / 2, 1120 + k * 46, F(700, 36, "Nunito"), INK, "center"));
   // stats
   const mission = S.settings.missions && p.mission ? (p.mission.result === true ? "✅" : p.mission.result === false ? "❌" : "–") : null;
@@ -413,6 +532,14 @@ export async function buildSlides(S, hide, myId, photos = {}) {
     draw: () => slidePlayer(S, p, i, hide),
     mine: p.id === myId,
   }));
-  const mine = people.filter((x) => x.mine), rest = people.filter((x) => !x.mine);
+  // A big group gets your own card plus the extremes, not 49 cards
+  let shown = people;
+  if (S.players.length > BIG_GROUP) {
+    // a clear winner gets a card; a ten-way tie isn't an extreme
+    const top = (k) => { const m = Math.max(...S.players.map((p) => p[k])), t = S.players.filter((p) => p[k] === m); return m > 0 && t.length <= 3 ? t.map((p) => p.id) : []; };
+    const stars = new Set([...top("forf"), ...top("chall"), ...top("skips")]);
+    shown = people.filter((x, i) => x.mine || stars.has(S.players[i].id));
+  }
+  const mine = shown.filter((x) => x.mine), rest = shown.filter((x) => !x.mine);
   return [...mine, ...group, ...rest];
 }

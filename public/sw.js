@@ -1,7 +1,7 @@
 // Service worker: makes 12 Pubs installable and lets the app shell open on bad pub signal.
 // Network first, so a new deploy shows up straight away; the cache is only a fallback.
 // Live game traffic (/socket.io) and the API never touch the cache.
-const CACHE = "12pubs-v4";
+const CACHE = "12pubs-v5";
 const SHELL = [
   "/", "/css/styles.css", "/js/app.js", "/js/api.js", "/js/recap.js", "/js/photos.js", "/vendor/qrcode.mjs", "/manifest.webmanifest",
   "/fonts/fredoka-latin-500-normal.woff2", "/fonts/fredoka-latin-600-normal.woff2", "/fonts/fredoka-latin-700-normal.woff2",

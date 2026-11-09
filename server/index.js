@@ -9,7 +9,7 @@ import * as G from "./game.js";
 import { RoomStore } from "./store.js";
 import { Stats, dashboardHtml } from "./stats.js";
 import { rulesPage, robotsTxt, sitemapXml } from "./seo.js";
-import { GameError, HOST_ACTIONS, publicState, nextEventAt, revealDue, claimPlayer, myMission, swapMission, setEmoji, addPlant, myPlants, removePlant,
+import { GameError, HOST_ACTIONS, publicState, nextEventAt, revealDue, claimPlayer, selfJoin, reportCatch, ownForfeit, myMission, swapMission, setEmoji, addPlant, myPlants, removePlant,
   feed, leavePlayer, comeBack, rotateHost, makeTakeover, useTakeover } from "./room.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -118,7 +118,8 @@ io.on("connection", (socket) => {
     const pubs = Array.isArray(input && input.pubs) ? input.pubs.filter((p) => p && p.name) : [];
     stats.nightCreated(state, pubs.some((p) => typeof p.lat === "number") ? "dublin" : pubs.length ? "type" : "go");
     enter(state, "host");
-    return { code: state.code, hostToken: state.hostToken, role: "host", state: publicState(state) };
+    const me = state.players[0], playerToken = claimPlayer(state, me.id); // the host is playing too
+    return { code: state.code, hostToken: state.hostToken, role: "host", playerId: me.id, playerToken, state: publicState(state) };
   });
 
   // Join or rejoin. Host token → host; player token → that player; otherwise a watcher.
@@ -139,6 +140,17 @@ io.on("connection", (socket) => {
     socket.data.role = "player"; socket.data.playerId = playerId;
     store.touch(state); broadcast(state);
     return { playerId, playerToken: token };
+  });
+
+  // Scanned the code and not on the list: add yourself
+  on("player:selfJoin", ({ name }) => {
+    const state = room();
+    if (socket.data.role !== "watcher") throw new GameError("You're already in");
+    const pl = selfJoin(state, name);
+    stats.bump("joins");
+    socket.data.role = "player"; socket.data.playerId = pl.id;
+    store.touch(state); broadcast(state);
+    return { playerId: pl.id, playerToken: pl.claimToken };
   });
 
   on("mission:mine", () => {
@@ -167,6 +179,19 @@ io.on("connection", (socket) => {
 
   // Plant a surprise from your own phone
   const needPlayer = () => { if (socket.data.role !== "player") throw new GameError("Pick your name first"); };
+  on("player:caught", ({ playerId }) => {
+    const state = room(); needPlayer();
+    const out = reportCatch(state, socket.data.playerId, playerId);
+    store.touch(state); broadcast(state);
+    io.to(state.code).emit("buzz", out.buzz);
+    return {};
+  });
+  on("player:forfeit", ({ id, action }) => {
+    const state = room(); needPlayer();
+    ownForfeit(state, socket.data.playerId, id, action);
+    store.touch(state); broadcast(state);
+    return {};
+  });
   on("plant:add", ({ kind, text }) => {
     const state = room(); needPlayer();
     const x = addPlant(state, socket.data.playerId, kind, text);

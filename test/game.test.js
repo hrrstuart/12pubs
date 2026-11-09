@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as G from "../server/game.js";
-import { createRoomState, publicState, HOST_ACTIONS as H, claimPlayer, myMission, swapMission, revealDrop, addPlant, myPlants, removePlant, nextEventAt, revealDue, isHere, makeTakeover, useTakeover } from "../server/room.js";
+import { createRoomState, publicState, HOST_ACTIONS as H, claimPlayer, myMission, swapMission, revealDrop, addPlant, myPlants, removePlant, nextEventAt, revealDue, isHere, makeTakeover, useTakeover, selfJoin, reportCatch, ownForfeit } from "../server/room.js";
 
 const settings = (o = {}) => ({ mode: "classic", cats: G.CATS.slice(), missions: true, surprise: true, drinkF: false, tokens: 2, ...o });
 const room = (o = {}) => createRoomState("TEST", { settings: settings(o), players: ["Harry", "Aoife", "Cian", "Niamh"], pubs: [{ name: "The Crane Bar" }] });
@@ -47,7 +47,9 @@ test("missions: everyone gets a different one, never about themselves", () => {
 });
 
 test("room input is validated", () => {
-  assert.throws(() => createRoomState("X", { players: ["Solo"] }), /two names/);
+  assert.throws(() => createRoomState("X", { players: [] }), /your name/);
+  const solo = createRoomState("X", { settings: settings(), players: ["Solo"] });
+  assert.throws(() => H.start(solo), /one more person/);
   const s = createRoomState("X", { settings: { mode: "nope", tokens: 9, cats: ["bogus"] }, players: ["A", "a", " B "] });
   assert.equal(s.settings.mode, "classic"); assert.equal(s.settings.tokens, 2); assert.deepEqual(s.settings.cats, G.CATS);
   assert.deepEqual(s.players.map((p) => p.n), ["A", "a 2", "B"]);
@@ -120,8 +122,8 @@ test("recap: everyone gets a title, and they're varied", async () => {
   const t = titles(S);
   assert.equal(Object.keys(t).length, 5);
   assert.equal(new Set(Object.values(t).map((x) => x.t)).size, 5);
-  assert.equal(t.Cian.t, "The Menace");
-  assert.equal(t["Seán"].t, "The Saint");
+  assert.equal(t.Cian.t, "Known to Gardaí");
+  assert.equal(t["Seán"].t, "Airtight Alibi");
   assert.equal(nightStats(S).out, 3600000);
 });
 
@@ -291,4 +293,108 @@ test("seo: rules page is real text, valid structured data, no 'drink faster' ite
   for (const m of html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs)) JSON.parse(m[1]);
   assert.ok(sitemapXml().includes("<loc>https://12pubs.ie/rules</loc>"));
   assert.ok(robotsTxt().includes("Disallow: /stats"));
+});
+
+/* ---------- big groups, self-join and catches from your own phone ---------- */
+const liveRoom = (n = 4) => {
+  const s = createRoomState("TEST", { settings: settings({ missions: false }), players: Array.from({ length: n }, (_, i) => "P" + i), pubs: [{ name: "The Crane Bar" }] });
+  H.start(s);
+  while (s.phase !== "live" || s.pub < 0 || s.plan[s.pub].type !== "rule") H.next(s);
+  return s;
+};
+
+test("big groups: up to 50 players, no more", () => {
+  const names = Array.from({ length: 60 }, (_, i) => "P" + i);
+  const s = createRoomState("TEST", { settings: settings(), players: names, pubs: [{ name: "The Crane Bar" }] });
+  assert.equal(s.players.length, 50);
+  assert.throws(() => selfJoin(s, "Late"), /50 players max/);
+});
+
+test("self-join: scan the code, type a name, you're in with your own phone", () => {
+  const s = room();
+  const pl = selfJoin(s, "Oisín");
+  assert.equal(pl.n, "Oisín");
+  assert.ok(pl.claimToken);
+  assert.ok(pl.mission);
+  assert.equal(selfJoin(s, "oisín").n, "oisín 2");
+  assert.equal(publicState(s).players.find((p) => p.n === "Oisín").claimed, true);
+});
+
+test("reporting: anyone can catch anyone, and it says who", () => {
+  const s = liveRoom();
+  const { buzz } = reportCatch(s, "p0", "p1");
+  assert.equal(buzz.playerId, "p1");
+  assert.equal(s.players[1].forf, 1);
+  assert.equal(s.forfeits[0].by, "P0");
+  assert.equal(publicState(s).catches[0].by, "P0");
+});
+
+test("reporting: no spamming the same person, but the host can still add one", () => {
+  const s = liveRoom();
+  reportCatch(s, "p0", "p1");
+  assert.throws(() => reportCatch(s, "p0", "p1"), /just been caught/);
+  assert.throws(() => reportCatch(s, "p2", "p1"), /just been caught/);
+  s.catches[0].at -= 20000;
+  assert.throws(() => reportCatch(s, "p0", "p1"), /a minute ago/);
+  reportCatch(s, "p2", "p1");
+  s.catches.forEach((c) => (c.at -= 70000));
+  reportCatch(s, "p0", "p1");
+  assert.equal(s.players[1].forf, 3);
+  H.caught(s, { playerId: "p1" });
+  assert.equal(s.players[1].forf, 4);
+});
+
+test("removing a catch puts every count right, and a troll can't re-report at once", () => {
+  const s = liveRoom();
+  const here = s.plan[s.pub];
+  here.rule = { id: "plant9", text: "x", plantId: 9 };
+  s.plants.push({ id: 9, breaks: 0, by: "p0" });
+  reportCatch(s, "p0", "p1");
+  const c = s.catches[0], f = s.forfeits[0];
+  assert.deepEqual([s.players[1].forf, here.forf, s.plants.at(-1).breaks], [1, 1, 1]);
+  H.forfeit(s, { id: f.id, action: "skip" });
+  assert.deepEqual([s.players[1].tokens, s.players[1].skips], [1, 1]);
+  H.removeCatch(s, { id: c.id });
+  assert.deepEqual([s.players[1].forf, here.forf, s.plants.at(-1).breaks, s.players[1].tokens, s.players[1].skips], [0, 0, 0, 2, 0]);
+  assert.equal(publicState(s).catches.length, 0);
+  assert.throws(() => H.removeCatch(s, { id: c.id }), /already gone/);
+  assert.throws(() => reportCatch(s, "p0", "p1"), /a minute ago/);
+});
+
+test("your own forfeit is yours to handle, nobody else's", () => {
+  const s = liveRoom();
+  reportCatch(s, "p0", "p1");
+  const id = s.forfeits[0].id;
+  assert.throws(() => ownForfeit(s, "p2", id, "done"), /not your forfeit/);
+  ownForfeit(s, "p1", id, "done");
+  assert.equal(s.forfeits.length, 0);
+  assert.equal(s.players[1].forf, 1);
+});
+
+test("awards: people who are level get called a tie, not whoever's first", async () => {
+  const { awards } = await import("../public/js/recap.js");
+  const mk = (n, forf) => ({ id: n, n, forf, skips: 0, chall: 0, joinedPub: 0, leftPub: null });
+  const plan = [{ name: "A", arrivedAt: 1, forf: 4 }, { name: "B", arrivedAt: 2, forf: 4 }];
+  const S = { players: [mk("Cian", 3), mk("Aoife", 3), mk("Niamh", 3), mk("Oisín", 1), mk("Seán", 1)], plan, settings: { missions: false } };
+  const [most, clean, pub] = awards(S, false);
+  assert.equal(most.n, "3-way tie");
+  assert.match(most.d, /3 forfeits each: Cian, Aoife, Niamh/);
+  assert.equal(clean.n, "Oisín & Seán");
+  assert.equal(pub.n, "A & B");
+  S.players[0].forf = 9;
+  assert.equal(awards(S, false)[0].n, "Cian");
+  assert.equal(awards(S, false)[0].d, "9 forfeits");
+});
+
+test("recap lines: every one fills in properly, and everyone sees the same line", async () => {
+  const { TITLES, titleLine } = await import("../public/js/recap.js");
+  const p = { id: "p3", forf: 1, skips: 2, chall: 1, leftPub: 11, joinedPub: 11 };
+  for (const key of Object.keys(TITLES)) {
+    assert.ok(TITLES[key].d.length >= 4, key);
+    for (let i = 0; i < 50; i++) {
+      const line = titleLine({ code: "R" + i }, { ...p, id: "p" + i }, key);
+      assert.doesNotMatch(line, /[{}]|1 times|undefined|NaN/, line);
+      assert.equal(line, titleLine({ code: "R" + i }, { ...p, id: "p" + i }, key));
+    }
+  }
 });
