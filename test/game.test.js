@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as G from "../server/game.js";
-import { createRoomState, publicState, HOST_ACTIONS as H, claimPlayer, myMission, swapMission, revealDrop, addPlant, myPlants, removePlant, nextEventAt, revealDue, isHere, makeTakeover, useTakeover, selfJoin, reportCatch, ownForfeit } from "../server/room.js";
+import { createRoomState, publicState, HOST_ACTIONS as H, claimPlayer, myMission, swapMission, revealDrop, addPlant, myPlants, removePlant, nextEventAt, revealDue, isHere, makeTakeover, useTakeover, selfJoin, reportCatch, ownForfeit, writeMission, dealWrittenMissions, missionDone, bustMission, missionInfo, addQuote } from "../server/room.js";
 
 const settings = (o = {}) => ({ mode: "classic", cats: G.CATS.slice(), missions: true, surprise: true, drinkF: false, tokens: 2, ...o });
 const room = (o = {}) => createRoomState("TEST", { settings: settings(o), players: ["Harry", "Aoife", "Cian", "Niamh"], pubs: [{ name: "The Crane Bar" }] });
@@ -397,4 +397,91 @@ test("recap lines: every one fills in properly, and everyone sees the same line"
       assert.equal(line, titleLine({ code: "R" + i }, { ...p, id: "p" + i }, key));
     }
   }
+});
+
+/* ---------- missions written by the group ---------- */
+const group = (n, missions = true) => createRoomState("TEST", { settings: settings({ missions }), players: Array.from({ length: n }, (_, i) => "P" + i), pubs: [{ name: "The Crane Bar" }] });
+const toLive = (s) => { H.start(s); if (s.phase === "missions") H.missionsDone(s); while (s.plan[s.pub].type !== "rule") H.next(s); return s; };
+
+test("written missions: shuffled, never your own, gaps filled from the list", () => {
+  for (let k = 0; k < 300; k++) {
+    const s = group(6);
+    writeMission(s, "p0", "Get the barman to call you boss");
+    writeMission(s, "p1", "Start a slow clap for no reason");
+    if (k % 2) writeMission(s, "p2", "Convince a stranger you're a twin");
+    H.start(s);
+    const fromGroup = s.players.filter((p) => p.mission.by);
+    assert.equal(fromGroup.length, k % 2 ? 3 : 2);
+    for (const p of fromGroup) assert.notEqual(p.mission.by, p.id);
+    assert.ok(s.players.every((p) => p.mission.text));
+  }
+});
+
+test("written missions: under 5 players you'd know who wrote it, so the list is used", () => {
+  const s = group(4);
+  writeMission(s, "p0", "Get the barman to call you boss");
+  H.start(s);
+  assert.ok(s.players.every((p) => !p.mission.by));
+  assert.throws(() => writeMission(s, "p1", "Too late for this one now"), /Too late/);
+  assert.throws(() => writeMission(group(5), "p1", "ab"), /longer/);
+});
+
+test("pulling off a mission hands someone a forfeit, once", () => {
+  const s = toLive(group(5));
+  missionDone(s, "p1", "p2");
+  assert.equal(s.players[1].mission.result, true);
+  assert.equal(s.players[2].forf, 1);
+  assert.equal(s.catches[0].byId, "p1");
+  assert.throws(() => missionDone(s, "p1", "p3"), /already/);
+  assert.throws(() => missionDone(s, "p3", "p3"), /someone else/);
+  assert.equal(publicState(s).players[1].missionDone, true);
+  assert.equal(publicState(s).players[1].mission, null); // still secret till the end
+});
+
+test("busting: right guess gets them, wrong guess gets you, two guesses max", () => {
+  const s = group(6);
+  writeMission(s, "p0", "Get the barman to call you boss");
+  toLive(s);
+  const holder = s.players.find((p) => p.mission.by === "p0");
+  const wrong = s.players.filter((p) => p.id !== "p0" && p.id !== holder.id);
+  assert.equal(bustMission(s, "p0", wrong[0].id).right, false);
+  assert.equal(s.players[0].forf, 1);
+  assert.equal(missionInfo(s, "p0").bustsLeft, 1);
+  assert.equal(bustMission(s, "p0", holder.id).right, true);
+  assert.equal(holder.forf, 1);
+  assert.equal(holder.mission.busted, true);
+  assert.equal(holder.mission.bustedBy, "P0");
+  assert.throws(() => missionDone(s, holder.id, "p0"), /busted/);
+  assert.throws(() => bustMission(s, "p0", holder.id), /Already busted/);
+  assert.throws(() => bustMission(s, "p1", "p2"), /didn't write/);
+});
+
+test("quote of the night: one each, the latest replaces yours", () => {
+  const s = toLive(group(3, false));
+  assert.throws(() => addQuote(group(3), "p0", "too early"), /Save it/);
+  addQuote(s, "p0", "“I'm not even drunk”");
+  addQuote(s, "p0", "I'm just Irish");
+  addQuote(s, "p1", "Where's my coat");
+  assert.deepEqual(publicState(s).quotes.map((q) => q.text), ["I'm just Irish", "Where's my coat"]);
+  H.quoteRemove(s, { id: s.quotes[0].id });
+  assert.equal(s.quotes.length, 1);
+});
+
+test("crew name is kept short and tidy", () => {
+  const s = createRoomState("X", { settings: settings({ crew: "  The   Accounts Lads and their extended families  " }), players: ["A"] });
+  assert.equal(s.settings.crew, "The Accounts Lads and their ex");
+});
+
+test("recap: nemesis, victim and peak chaos come from who caught who", async () => {
+  const { rivals, receipts, nightStats } = await import("../public/js/recap.js");
+  const s = toLive(group(5, false));
+  for (let i = 0; i < 3; i++) { reportCatch(s, "p1", "p0"); s.catches.forEach((c) => (c.at -= 70000)); }
+  reportCatch(s, "p2", "p0");
+  const P = publicState(s);
+  P.phase = "recap";
+  const r = rivals(P, P.players[0]);
+  assert.deepEqual(r.nemesis, { ids: ["p1"], n: 3 });
+  assert.match(receipts(P, P.players[0], false)[0], /Nemesis: P1, caught you 3×/);
+  assert.deepEqual(rivals(P, P.players[1]).victim, { ids: ["p0"], n: 3 });
+  assert.equal(nightStats(P).peak.n, 4);
 });

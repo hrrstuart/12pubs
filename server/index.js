@@ -9,7 +9,7 @@ import * as G from "./game.js";
 import { RoomStore } from "./store.js";
 import { Stats, dashboardHtml } from "./stats.js";
 import { rulesPage, robotsTxt, sitemapXml } from "./seo.js";
-import { GameError, HOST_ACTIONS, publicState, nextEventAt, revealDue, claimPlayer, selfJoin, reportCatch, ownForfeit, myMission, swapMission, setEmoji, addPlant, myPlants, removePlant,
+import { GameError, HOST_ACTIONS, publicState, nextEventAt, revealDue, claimPlayer, selfJoin, reportCatch, ownForfeit, writeMission, missionInfo, missionDone, bustMission, addQuote, myMission, swapMission, setEmoji, addPlant, myPlants, removePlant,
   feed, leavePlayer, comeBack, rotateHost, makeTakeover, useTakeover } from "./room.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -117,8 +117,8 @@ io.on("connection", (socket) => {
     const state = store.create(input);
     const pubs = Array.isArray(input && input.pubs) ? input.pubs.filter((p) => p && p.name) : [];
     stats.nightCreated(state, pubs.some((p) => typeof p.lat === "number") ? "dublin" : pubs.length ? "type" : "go");
-    enter(state, "host");
     const me = state.players[0], playerToken = claimPlayer(state, me.id); // the host is playing too
+    enter(state, "host", me.id);
     return { code: state.code, hostToken: state.hostToken, role: "host", playerId: me.id, playerToken, state: publicState(state) };
   });
 
@@ -126,8 +126,11 @@ io.on("connection", (socket) => {
   on("room:join", ({ code, hostToken, playerId, playerToken }) => {
     const state = store.get(code);
     if (!state) throw new GameError("No room with that code");
-    if (hostToken && hostToken === state.hostToken) { enter(state, "host"); return { role: "host", state: publicState(state) }; }
     const pl = state.players.find((p) => p.id === playerId);
+    if (hostToken && hostToken === state.hostToken) {
+      const mine = pl && playerToken && pl.claimToken === playerToken ? pl.id : null; // the host is usually playing too
+      enter(state, "host", mine); return { role: "host", playerId: mine, state: publicState(state) };
+    }
     if (pl && playerToken && pl.claimToken === playerToken) { enter(state, "player", pl.id); return { role: "player", playerId: pl.id, state: publicState(state) }; }
     enter(state, "watcher");
     return { role: "watcher", state: publicState(state) };
@@ -155,7 +158,7 @@ io.on("connection", (socket) => {
 
   on("mission:mine", () => {
     const state = room();
-    if (socket.data.role !== "player") throw new GameError("Pick your name first");
+    if (!socket.data.playerId) throw new GameError("Pick your name first");
     const r = myMission(state, socket.data.playerId);
     store.touch(state); broadcast(state);
     return r;
@@ -163,7 +166,7 @@ io.on("connection", (socket) => {
 
   on("mission:swap", () => {
     const state = room();
-    if (socket.data.role !== "player") throw new GameError("Pick your name first");
+    if (!socket.data.playerId) throw new GameError("Pick your name first");
     const r = swapMission(state, socket.data.playerId);
     store.touch(state);
     return r;
@@ -171,14 +174,28 @@ io.on("connection", (socket) => {
 
   on("player:emoji", ({ emoji }) => {
     const state = room();
-    if (socket.data.role !== "player") throw new GameError("Pick your name first");
+    if (!socket.data.playerId) throw new GameError("Pick your name first");
     setEmoji(state, socket.data.playerId, emoji ?? null);
     store.touch(state); broadcast(state);
     return {};
   });
 
   // Plant a surprise from your own phone
-  const needPlayer = () => { if (socket.data.role !== "player") throw new GameError("Pick your name first"); };
+  const needPlayer = () => { if (!socket.data.playerId) throw new GameError("Pick your name first"); };
+  const buzzAll = (state, out) => { for (const b of [].concat((out && out.buzz) || [])) io.to(state.code).emit("buzz", b); };
+  on("mission:write", ({ text }) => { const state = room(); needPlayer(); writeMission(state, socket.data.playerId, text); store.touch(state); broadcast(state); return {}; });
+  on("mission:info", () => { const state = room(); needPlayer(); return missionInfo(state, socket.data.playerId); });
+  on("mission:done", ({ giveTo }) => {
+    const state = room(); needPlayer();
+    const out = missionDone(state, socket.data.playerId, giveTo);
+    store.touch(state); broadcast(state); buzzAll(state, out); return {};
+  });
+  on("mission:bust", ({ playerId }) => {
+    const state = room(); needPlayer();
+    const out = bustMission(state, socket.data.playerId, playerId);
+    store.touch(state); broadcast(state); buzzAll(state, out); return { right: out.right };
+  });
+  on("quote:add", ({ text }) => { const state = room(); needPlayer(); addQuote(state, socket.data.playerId, text); store.touch(state); broadcast(state); return {}; });
   on("player:caught", ({ playerId }) => {
     const state = room(); needPlayer();
     const out = reportCatch(state, socket.data.playerId, playerId);

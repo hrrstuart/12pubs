@@ -46,6 +46,14 @@ export function nightStats(S) {
   let challenges = 0;
   for (const p of visited) for (const c of [p.arrive, p.drop]) if (c && c.state === "done") challenges++;
   const plants = (S.plants || []).filter((x) => x.status === "approved");
+  // Peak chaos: the 10 minutes with the most forfeits (needs at least 3 to count as chaos)
+  let peak = null;
+  const ts = (S.catches || []).filter((c) => c.at).slice().sort((a, b) => a.at - b.at);
+  for (let i = 0, j = 0; j < ts.length; j++) {
+    while (ts[j].at - ts[i].at > 10 * 60000) i++;
+    const n = j - i + 1;
+    if (n >= 3 && (!peak || n > peak.n)) peak = { n, at: ts[i].at, pub: S.plan[ts[i].pub] ? S.plan[ts[i].pub].name : null };
+  }
   return {
     visited: visited.length,
     lastPub: visited.length ? visited[visited.length - 1].name : null,
@@ -53,7 +61,7 @@ export function nightStats(S) {
     out: S.startAt ? end - S.startAt : 0,
     forfeits: S.players.reduce((a, p) => a + p.forf, 0),
     skips: S.players.reduce((a, p) => a + p.skips, 0),
-    challenges, longest, quickest,
+    challenges, longest, quickest, peak,
     ruleThatGotYou: worst && worst.forf ? { text: worst.rule.text, pub: worst.name, n: worst.forf } : null,
   };
 }
@@ -93,6 +101,33 @@ export function awards(S, hide) {
     list.push({ t: "Escape artist", ...(topSkips ? winners(namesOf(level(ps, "skips", topSkips)), ps.length, topSkips, "skip token") : { n: "Nobody", d: "Nobody bottled it" }) });
   }
   return list;
+}
+
+/* ---------------- who did what to who ---------------- */
+// Your nemesis caught you most; your victim is who you caught most. Needs 2+ so it means something.
+export function rivals(S, p) {
+  const top = (pairs) => {
+    const count = {};
+    for (const id of pairs) count[id] = (count[id] || 0) + 1;
+    const best = Math.max(0, ...Object.values(count));
+    const ids = Object.keys(count).filter((id) => count[id] === best);
+    return best >= 2 && ids.length <= 2 ? { ids, n: best } : null;
+  };
+  const cs = (S.catches || []).filter((c) => c.byId && c.byId !== c.playerId && c.why !== "wrong");
+  return { nemesis: top(cs.filter((c) => c.playerId === p.id).map((c) => c.byId)), victim: top(cs.filter((c) => c.byId === p.id).map((c) => c.playerId)) };
+}
+const nameOf = (S, id, hide) => { const p = S.players.find((x) => x.id === id); return p ? displayName(S, p.n, hide) : "?"; };
+// The receipts: the most personal lines we can say about someone's night
+export function receipts(S, p, hide) {
+  const out = [], r = rivals(S, p), names = (x) => x.ids.map((id) => nameOf(S, id, hide)).join(" & ");
+  if (r.nemesis) out.push(`😈 Nemesis: ${names(r.nemesis)}, caught you ${r.nemesis.n}×`);
+  if (r.victim) out.push(`🎯 Favourite victim: ${names(r.victim)}, ${r.victim.n}×`);
+  const m = p.mission;
+  if (m && m.text) out.push(`🤫 “${m.text}” ${m.result === true ? "✅" : m.busted ? `🚨 busted by ${hide ? "someone" : m.bustedBy}` : m.result === false ? "❌" : "(never even tried)"}`);
+  const planted = (S.plants || []).filter((x) => x.by === p.id && x.status === "approved" && x.revealed);
+  if (planted.length) { const x = planted[0]; out.push(`🎁 Planted “${x.text}”${x.kind === "rule" && x.breaks ? `, ${plural(x.breaks, "catch")}` : ""}`); }
+  const cg = comingsAndGoings(S, p); if (cg) out.push(cg);
+  return out;
 }
 
 /* ---------------- a title for everyone ---------------- */
@@ -226,7 +261,7 @@ export function titles(S) {
 
 export function recapText(S, hide) {
   const st = nightStats(S), tt = titles(S);
-  const lines = [`🍻 12 Pubs · ${MODE_LABEL[S.settings.mode]} · ${duration(st.out)} out`, ""];
+  const lines = [`🍻 ${S.settings.crew ? S.settings.crew + " · " : ""}12 Pubs · ${MODE_LABEL[S.settings.mode]} · ${duration(st.out)} out`, ""];
   S.plan.forEach((p, i) => lines.push(`${i + 1}. ${p.name}${p.arrivedAt ? ` (${time(p.arrivedAt)})` : ""}`));
   lines.push("", ...awards(S, hide).map((a) => `🏆 ${a.t}: ${a.n} (${a.d})`));
   lines.push("", ...S.players.map((p) => `${tt[p.id].em} ${displayName(S, p.n, hide)}: ${tt[p.id].t}${comingsAndGoings(S, p) ? ` (${comingsAndGoings(S, p).toLowerCase()})` : ""}`));
@@ -239,6 +274,7 @@ export function recapText(S, hide) {
     lines.push("", "🎁 Planted surprises");
     planted.forEach((x) => lines.push(`${displayName(S, x.byName, hide)}'s ${x.kind} (pub ${x.pub + 1}): ${x.text}${!x.revealed ? " (never got its moment)" : x.kind === "rule" ? ` · caught ${x.breaks}` : ""}`));
   }
+  for (const q of S.quotes || []) lines.push("", `💬 “${q.text}”`);
   lines.push("", "Play yours at 12pubs.ie");
   return lines.join("\n");
 }
@@ -334,6 +370,8 @@ function slideCover(S, hide) {
   g.logo(80, 90);
   const done = st.visited >= 12;
   const big = (t, y) => { let size = 150; while (size > 80) { g.x.font = F(700, size); if (g.x.measureText(t).width <= 920) break; size -= 6; } g.text(t, 80, y, F(700, size)); };
+  const crew = (S.settings.crew || "").trim();
+  if (crew) g.text(g.fit(crew, F(700, 64), 920), 82, done ? 590 : 570, F(700, 64), WHITE);
   if (done) { big("We made it!", 720); g.text(day(S.startAt), 82, 810, F(700, 40, "Nunito")); }
   else {
     big(`We did ${st.visited} pubs!`, 700);
@@ -407,6 +445,7 @@ function slideNumbers(S) {
     y += h + 30;
   };
   if (st.ruleThatGotYou) wide("THE RULE THAT GOT YOU", `“${st.ruleThatGotYou.text}”`, `${plural(st.ruleThatGotYou.n, "catch")} at ${st.ruleThatGotYou.pub}`, 3);
+  if (st.peak && y < 1500) wide("PEAK CHAOS", `${time(st.peak.at)}${st.peak.pub ? ` at ${st.peak.pub}` : ""}`, `${st.peak.n} forfeits in 10 minutes`);
   if (st.longest && y < 1500) wide("LONGEST STAY", st.longest.name, duration(st.longest.ms));
   if (st.quickest && y < 1500) wide("QUICKEST PINT", st.quickest.name, duration(st.quickest.ms));
   g.footer();
@@ -443,9 +482,10 @@ function slideMissions(S, hide) {
   rows.forEach((p, i) => {
     const y = top + i * (rowH + gap);
     g.box(80, y, 920, rowH, 26, WHITE, 6);
-    const res = p.mission && p.mission.result === true ? "✅" : p.mission && p.mission.result === false ? "❌" : "–";
+    const res = p.mission && p.mission.result === true ? "✅" : p.mission && p.mission.busted ? "🚨" : p.mission && p.mission.result === false ? "❌" : "–";
     g.text(res, 950, y + (big ? 80 : rowH / 2 + 16), F(700, big ? 56 : 40), INK, "right");
-    g.text(g.fit(displayName(S, p.n, hide), F(700, big ? 44 : 34), 720), 120, y + (big ? 70 : rowH / 2 - 4), F(700, big ? 44 : 34));
+    const setBy = p.mission && p.mission.byName && !hide ? ` · set by ${p.mission.byName}` : "";
+    g.text(g.fit(displayName(S, p.n, hide) + setBy, F(700, big ? 44 : 34), 720), 120, y + (big ? 70 : rowH / 2 - 4), F(700, big ? 44 : 34));
     const font = F(700, big ? 34 : 26, "Nunito");
     const lines = g.wrap(p.mission ? p.mission.text : "", font, big ? 780 : 760, big ? 3 : 1);
     lines.forEach((l, k) => g.text(l, 120, y + (big ? 124 : rowH / 2 + 32) + k * (big ? 42 : 30), font));
@@ -476,12 +516,32 @@ function slideSurprises(S, hide) {
   return g.c;
 }
 
+function slideQuotes(S, hide) {
+  const qs = (S.quotes || []).slice(-3).reverse(), g = canvas("#2dd4bf");
+  g.confetti([WHITE, "#ffd23f", INK, "#ff7eb6"], 50, 7);
+  g.sticker("💬 QUOTE OF THE NIGHT", 80, 90);
+  g.text(qs.length > 1 ? "Overheard." : "Said out loud.", 80, 270, F(700, 96));
+  const one = qs.length === 1, size = one ? 76 : 50, lh = Math.round(size * 1.2);
+  let y = 340;
+  qs.forEach((q) => {
+    const lines = g.wrap(`“${q.text}”`, F(700, size), 820, one ? 6 : 3);
+    const h = 90 + lines.length * lh + 40;
+    g.box(80, y, 920, h, 32, WHITE);
+    lines.forEach((l, k) => g.text(l, 130, y + 50 + lh + k * lh - 10, F(700, size)));
+    g.text(hide ? "" : `added by ${q.byName}`, 130, y + h - 36, F(700, 30, "Nunito"), "#555");
+    y += h + 30;
+  });
+  g.footer();
+  return g.c;
+}
+
 function slidePlayer(S, p, i, hide) {
   const tt = titles(S)[p.id], name = displayName(S, p.n, hide), g = canvas(playerColor(i));
   const rank = 1 + S.players.filter((x) => x.forf > p.forf).length; // ties share a rank
   g.confetti([WHITE, INK, "#ffd23f"], 45, i + 10);
   g.logo(80, 80, 0.62);
-  g.sticker("MY 12 PUBS", 760 - 60, 108, WHITE, INK);
+  const tag = g.fit((S.settings.crew || "MY 12 PUBS").toUpperCase(), F(700, 30), 420);
+  g.x.font = F(700, 30); g.sticker(tag, W - 80 - (g.x.measureText(tag).width + 44), 108, WHITE, INK);
   g.avatar(W / 2, 470, 150, WHITE, faceOf(S, p, i, hide));
   g.text(g.fit(name, F(700, 120), 920), W / 2, 760, F(700, 120), INK, "center");
   // the title
@@ -505,8 +565,10 @@ function slidePlayer(S, p, i, hide) {
     g.text(small, X + tw / 2, 1470, F(700, 30, "Nunito"), INK, "center");
   });
   const joint = S.players.filter((x) => x.forf === p.forf).length > 1;
-  g.text(p.forf ? `${joint ? "Joint " : ""}#${rank} most caught of ${S.players.length}` : "Never caught. Not once.", W / 2, 1610, F(700, 44), INK, "center");
-  g.text(comingsAndGoings(S, p) || day(S.startAt), W / 2, 1666, F(700, 32, "Nunito"), INK, "center");
+  g.text(p.forf ? `${joint ? "Joint " : ""}#${rank} most caught of ${S.players.length}` : "Never caught. Not once.", W / 2, 1584, F(700, 44), INK, "center");
+  const lines = receipts(S, p, hide).slice(0, 3);
+  if (!lines.length) lines.push(day(S.startAt));
+  lines.forEach((l, k) => g.text(g.fit(l, F(700, 32, "Nunito"), 900), W / 2, 1642 + k * 44, F(700, 32, "Nunito"), INK, "center"));
   g.footer("Get yours at 12pubs.ie");
   return g.c;
 }
@@ -525,6 +587,7 @@ export async function buildSlides(S, hide, myId, photos = {}) {
     { key: "awards", label: "The awards", draw: () => slideAwards(S, hide) },
     ...(S.settings.missions ? [{ key: "missions", label: "Secret missions", draw: () => slideMissions(S, hide) }] : []),
     ...((S.plants || []).some((x) => x.status === "approved") ? [{ key: "surprises", label: "Planted surprises", draw: () => slideSurprises(S, hide) }] : []),
+    ...((S.quotes || []).length ? [{ key: "quotes", label: "Quote of the night", draw: () => slideQuotes(S, hide) }] : []),
   ];
   const people = S.players.map((p, i) => ({
     key: hide ? `player-${i + 1}` : p.n.toLowerCase().replace(/[^a-z0-9]+/g, "-"),

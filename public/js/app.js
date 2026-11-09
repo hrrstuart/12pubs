@@ -330,7 +330,7 @@ async function loadRoute() {
   setupScreen();
 }
 function setupScreen() {
-  D = D || { players: [""], emojis: [], photos: [], mode: "classic", cats: CATS.map((c) => c[0]), missions: true, surprise: true, drinkF: false, tokens: 2, pubMode: "go", typed: Array(12).fill(""), start: "trinity", route: null };
+  D = D || { crew: "", players: [""], emojis: [], photos: [], mode: "classic", cats: CATS.map((c) => c[0]), missions: true, surprise: true, drinkF: false, tokens: 2, pubMode: "go", typed: Array(12).fill(""), start: "trinity", route: null };
   const d = D;
   const sw = (k) => `<button class="switch" data-sw="${k}" aria-pressed="${d[k]}" aria-label="${k}"></button>`;
   const step = (n, t) => `<div class="step"><span class="num">${n}</span><h3>${t}</h3></div>`;
@@ -347,14 +347,16 @@ function setupScreen() {
   }
   app.innerHTML = `
   <button class="back" id="back">← Back</button>
-  <h2 style="margin-bottom:18px">Set up the night</h2>
+  <h2 style="margin-bottom:18px">Right, set it up</h2>
 
-  <div class="card">${step(1, "Who's hosting?")}
+  <div class="card">${step(1, "Who's in charge? (God help us)")}
     <div class="namelist">${d.players.slice(0, 1).map((v, i) => `<div class="namerow"><button class="dot ${d.photos[i] ? "photo" : ""}" data-pic="${i}" aria-label="Pick a picture" style="background-color:${playerColor(i)};${d.photos[i] ? `background-image:url('${d.photos[i]}')` : ""}">${d.photos[i] ? "" : d.emojis[i] || esc((v.trim()[0] || "").toUpperCase()) || "+"}</button><input class="input" data-pl="${i}" maxlength="14" value="${esc(v)}" placeholder="${i === 0 ? "Your name" : "Name"}"></div>`).join("")}</div>
     <p class="small muted" style="margin:10px 0 0">Tap the circle to pick an emoji or add a photo. Your mates join with a code on the next screen.</p>
+    <div class="label" style="margin:16px 0 8px">Name the crew (optional)</div>
+    <input class="input" id="crew" maxlength="30" value="${esc(d.crew || "")}" placeholder="Sinéad's 30th, The Accounts Lads…">
   </div>
 
-  <div class="card">${step(2, "How savage?")}
+  <div class="card">${step(2, "How bad do you want it?")}
     <div class="tiles">${MODES.map(([k, em, l, sub]) => `<button class="tile" data-mode="${k}" aria-pressed="${d.mode === k}"><span class="em">${em}</span>${l}<small>${sub}</small></button>`).join("")}</div>
     <div class="label" style="margin:16px 0 8px">Rule types</div>
     <div class="chips">${CATS.map(([k, l]) => `<button class="chip" data-cat="${k}" aria-pressed="${d.cats.includes(k)}">${l}</button>`).join("")}</div>
@@ -374,13 +376,14 @@ function setupScreen() {
       <button class="tile" data-pm="dublin" aria-pressed="${d.pubMode === "dublin"}"><span class="em">🇮🇪</span>Dublin</button>
     </div>${pubs}
   </div>
-  ${bar(`<button class="btn pink big" id="create">Create the room →</button>`)}`;
+  ${bar(`<button class="btn pink big" id="create">Open the doors →</button>`)}`;
 
   $("back").onclick = () => { view = "home"; render(); };
   app.querySelectorAll("[data-pl]").forEach((i) => (i.oninput = () => {
     const k = +i.dataset.pl; d.players[k] = i.value;
     if (!d.photos[k] && !d.emojis[k]) i.previousElementSibling.textContent = (i.value.trim()[0] || "+").toUpperCase();
   }));
+  $("crew").oninput = (e) => (d.crew = e.target.value);
   app.querySelectorAll("[data-pic]").forEach((b) => (b.onclick = () => {
     const k = +b.dataset.pic;
     pictureSheet({ title: `${d.players[k].trim() || "Player " + (k + 1)}'s picture`, emoji: d.emojis[k], photo: d.photos[k], note: PHOTO_NOTE_HOST,
@@ -412,7 +415,7 @@ async function createNight() {
   const pubs = d.pubMode === "dublin" && d.route ? d.route.route
     : d.pubMode === "type" ? d.typed.map((name) => ({ name: name.trim() })) : [];
   const btn = $("create"); btn.disabled = true;
-  const r = await act(call("room:create", { settings: { mode: d.mode, cats: d.cats, missions: d.missions, surprise: d.surprise, drinkF: d.drinkF, tokens: d.tokens }, players, pubs }));
+  const r = await act(call("room:create", { settings: { mode: d.mode, cats: d.cats, missions: d.missions, surprise: d.surprise, drinkF: d.drinkF, tokens: d.tokens, crew: (d.crew || "").trim() }, players, pubs }));
   btn.disabled = false;
   if (!r) return;
   ME = { code: r.code, role: "host", hostToken: r.hostToken, playerId: r.playerId, playerToken: r.playerToken }; saveSession(ME);
@@ -535,26 +538,18 @@ function scores() {
 /* ---------- who got caught (host or anyone with their own phone) ---------- */
 function caughtBlock() {
   const list = here();
-  return `<h3 class="h" style="margin-top:4px">Who got caught? 🫵</h3>
+  return `<h3 class="h" style="margin-top:4px">Caught someone? 🫵</h3>
   ${list.length > 12 ? `<button class="btn pink" id="pickcaught" style="margin-bottom:22px">🫵 Someone got caught</button>`
     : `<div class="faces" style="margin-bottom:22px">${list.map((x) => `<button class="face" data-caught="${x.id}">${av(x.n)}${esc(x.n)}</button>`).join("")}</div>`}`;
 }
 function wireCaught(report) {
   app.querySelectorAll("[data-caught]").forEach((b) => (b.onclick = () => report(b.dataset.caught)));
-  if ($("pickcaught")) $("pickcaught").onclick = () => {
-    const ov = openOverlay(`<div class="card"><h3 style="font-size:22px;margin-bottom:12px">🫵 Who got caught?</h3>
-      <input class="input" id="pcq" maxlength="14" placeholder="Search names" autocomplete="off">
-      <div class="faces" style="margin-top:12px">${here().map((x) => `<button class="face" data-pc="${x.id}" data-name="${esc(x.n.toLowerCase())}">${av(x.n)}${esc(x.n)}</button>`).join("")}</div>
-      <button class="btn ghost" id="pcx" style="margin:16px 0 0">Close</button></div>`, true);
-    ov.querySelector("#pcx").onclick = closeOverlay;
-    ov.querySelector("#pcq").oninput = (e) => { const q = e.target.value.trim().toLowerCase(); ov.querySelectorAll("[data-pc]").forEach((b) => { b.style.display = b.dataset.name.includes(q) ? "" : "none"; }); };
-    ov.querySelectorAll("[data-pc]").forEach((b) => (b.onclick = () => { closeOverlay(); report(b.dataset.pc); }));
-  };
+  if ($("pickcaught")) $("pickcaught").onclick = () => pickPerson("🫵 Who got caught?", here(), report);
 }
 function removeCatchSheet() {
   const ov = openOverlay(`<div class="card"><h3 style="font-size:22px;margin-bottom:6px">↩️ Take back a forfeit</h3>
     <p class="small muted" style="margin:0 0 12px">Wrong person, or someone messing? It comes off their total.</p>
-    ${S.catches.length ? S.catches.map((c) => `<div class="row" style="margin-bottom:8px"><span style="flex:1;min-width:0"><b>${esc(c.n)}</b><br><small class="muted">Pub ${c.pub + 1}${c.by ? ` · reported by ${esc(c.by)}` : ""}</small></span><button class="btn sm" data-rm="${c.id}" style="flex:0 0 auto;width:auto;margin:0">Remove</button></div>`).join("") : `<p class="muted">Nobody's been caught yet.</p>`}
+    ${S.catches.length ? S.catches.map((c) => `<div class="row" style="margin-bottom:8px"><span style="flex:1;min-width:0"><b>${esc(c.n)}</b><br><small class="muted">Pub ${c.pub + 1}${c.by ? ` · reported by ${esc(c.by)}` : ""}</small></span><button class="btn sm" data-rm="${c.id}" style="flex:0 0 auto;width:auto;margin:0">Remove</button></div>`).join("") : `<p class="muted">Nobody's been caught yet. Suspicious.</p>`}
     <button class="btn ghost" id="rmx" style="margin:16px 0 0">Close</button></div>`, true);
   ov.querySelector("#rmx").onclick = closeOverlay;
   ov.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => { if (await H("removeCatch", { id: +b.dataset.rm })) { closeOverlay(); toast("Taken back ↩️"); } }));
@@ -740,17 +735,19 @@ function planScreen() {
   <div class="card center" style="background:var(--blue)">${inviteBlock(inviteLine())}</div>
   <h3 class="h">${S.players.length} in so far</h3>
   <div class="pics">${S.players.map((p) => `<button class="pic" data-pp="${p.id}">${av(p.n)}<small>${esc(p.n)}</small></button>`).join("")}${S.players.length < MAX_PLAYERS ? `<button class="pic" id="addlate"><span class="av" style="background:var(--white)">＋</span><small>No phone?</small></button>` : ""}</div>
+  ${writeMissionBlock()}
   <h2 style="margin-top:22px">Tonight's rules</h2>
-  <p class="muted" style="margin:6px 0 16px">${MODE_LABEL[S.settings.mode]}${S.settings.mode === "hard" ? " · each rule lasts 3 pubs" : ""}. Don't like one? 🎲 it.</p>
+  <p class="muted" style="margin:6px 0 16px">${MODE_LABEL[S.settings.mode]}${S.settings.mode === "hard" ? " · each rule lasts 3 pubs" : ""}. Don't like one? 🎲 it. Nobody will know.</p>
   <div class="card">${ruleList(true)}</div>
   ${surprisesCard()}
-  ${bar(S.players.length < 2 ? `<button class="btn big" disabled>Waiting for someone to join…</button>` : `<button class="btn pink big" id="go">Start the night with ${S.players.length} 🍻</button>`)}`;
+  ${bar(S.players.length < 2 ? `<button class="btn big" disabled>Waiting on your mates… any minute now</button>` : `<button class="btn pink big" id="go">Start the night with ${S.players.length} 🍻</button>`)}`;
   wireRuleList();
   $("cancel").onclick = leaveRoom;
   wireCopyInvite(app);
   app.querySelectorAll("[data-pp]").forEach((b) => (b.onclick = () => editPlayerPicture(S.players.find((p) => p.id === b.dataset.pp))));
   if ($("addlate")) $("addlate").onclick = addPlayerSheet;
   wireSurprises();
+  wireWriteMission();
   if ($("go")) $("go").onclick = () => lookAfterScreen(() => H("start"), "We're sound. Let's go 🍻");
 }
 
@@ -787,6 +784,7 @@ function passPhone(id) {
 function liveHost() {
   const p = S.plan[S.pub], last = S.pub >= 11, isRule = p.type === "rule";
   app.innerHTML = `${topBar()}
+  ${myMissionButton()}
   ${pubCard(true)}
   ${forfeitCards(true)}
   ${isRule ? caughtBlock() : ""}
@@ -794,7 +792,7 @@ function liveHost() {
   ${p.drop ? challengeCard(p.drop, "drop", true) : ""}
   ${plantedCards(true)}
   ${pendingLine(p, true)}
-  <h3 class="h">Forfeits so far</h3>
+  <h3 class="h">The hall of shame</h3>
   ${scores()}
   ${feedLog()}
   ${last ? "" : `<button class="btn ghost" id="endhere" style="margin-top:18px">${endArmed ? `Tap again to end at ${esc(p.name)}` : `🏁 Calling it? End the night here`}</button>`}
@@ -819,11 +817,13 @@ function liveHost() {
     if (await H("caught", { playerId })) { vibrate(); window.scrollTo({ top: app.querySelector(".forfeit")?.offsetTop - 12 || 0, behavior: "smooth" }); }
   });
   $("next").onclick = () => H(last ? "finish" : "next");
+  wireMyMission();
   $("menu").onclick = () => menuSheet([
     { label: `📱 Invite mates (code ${esc(S.code)})`, cls: "blue", fn: inviteSheet },
     ...(S.players.length < MAX_PLAYERS ? [{ label: "👋 Someone's joined", cls: "green", fn: addPlayerSheet }] : []),
     { label: "🛌 Someone's heading home", cls: "", fn: leaveSheet },
     { label: "↩️ Take back a forfeit", cls: "", fn: () => { closeOverlay(); removeCatchSheet(); } },
+    ...(ME.playerId ? [{ label: "💬 Quote of the night", cls: "yellow", fn: () => { closeOverlay(); quoteSheet(); } }] : []),
     { label: "👑 Hand over hosting", cls: "yellow", fn: handoverSheet },
     ...(S.settings.missions ? [{ label: "🤫 Peek at a secret mission", cls: "purple", fn: () => { closeOverlay(); H("peekMissions"); } }] : []),
     { label: "🏁 End the night early", cls: "", fn: (b) => {
@@ -839,16 +839,18 @@ function liveHost() {
 /* ================= HOST: REVEAL ================= */
 function revealHost() {
   app.innerHTML = `
-  <h2>🤫 Mission reveal</h2>
-  <p class="muted" style="margin:6px 0 18px">Read each one out. Did they pull it off?</p>
+  <h2>🤫 The reveal</h2>
+  <p class="muted" style="margin:6px 0 18px">Results came in during the night. Read them out, fix any that are wrong, then on to the recap.</p>
   ${S.players.map((p, i) => `<div class="card" style="background:${playerColor(i)}">
     <div class="row" style="justify-content:flex-start"><span style="flex:0">${av(p.n)}</span><b class="display" style="font-size:22px">${esc(p.n)}</b></div>
-    <p style="font:800 19px/1.3 var(--body);margin:12px 0 0">${esc(p.mission ? p.mission.text : "")}</p>
+    <p style="font:800 19px/1.3 var(--body);margin:12px 0 0">${esc(p.mission ? p.mission.text : "")}</p>${missionBy(p)}
     <div class="verdict"><button class="btn yes" data-id="${p.id}" data-r="1" aria-pressed="${p.mission && p.mission.result === true}">✓ Nailed it</button><button class="btn no" data-id="${p.id}" data-r="0" aria-pressed="${p.mission && p.mission.result === false}">✗ Failed</button></div></div>`).join("")}
   ${bar(`<button class="btn pink big" id="torecap">See the recap →</button>`)}`;
   app.querySelectorAll("[data-r]").forEach((b) => (b.onclick = () => H("missionResult", { playerId: b.dataset.id, result: b.dataset.r === "1" })));
   $("torecap").onclick = () => H("revealDone");
 }
+
+const missionBy = (p) => p.mission && (p.mission.byName || p.mission.busted) ? `<p class="small" style="margin:6px 0 0">${p.mission.byName ? `Set by ${esc(p.mission.byName)}` : ""}${p.mission.busted ? `${p.mission.byName ? " · " : ""}🚨 busted by ${esc(p.mission.bustedBy)}` : ""}</p>` : "";
 
 /* ================= GUESTS ================= */
 function claimScreen() {
@@ -860,7 +862,7 @@ function claimScreen() {
   ${selfJoinBlock()}
   ${names.length ? `${S.phase === "recap" ? "" : `<h3 class="h" style="margin-top:18px">Or did the host add you?</h3>`}
   <div class="faces">${names.map((p) => `<button class="face" data-id="${p.id}" ${p.claimed ? "disabled" : ""}>${av(p.n)}${esc(p.n)}<small>${p.claimed ? "taken" : ""}</small></button>`).join("")}</div>` : ""}
-  <p class="center" style="margin-top:20px"><button class="linkbtn" id="watch">${S.phase === "recap" ? "Just show me the recap" : "I'm just watching"}</button></p>`;
+  <p class="center" style="margin-top:20px"><button class="linkbtn" id="watch">${S.phase === "recap" ? "Just show me the recap" : "Just here to watch"}</button></p>`;
   $("leave").onclick = leaveRoom;
   $("watch").onclick = () => { watchOnly = true; render(); };
   if ($("selfgo")) {
@@ -887,15 +889,94 @@ function selfJoinBlock() {
 }
 
 function myMissionButton(big) {
-  if (!S.settings.missions || ME.role !== "player") return "";
-  return `<button class="btn purple ${big ? "big" : ""}" id="mymission">🤫 My secret mission</button>`;
+  if (!S.settings.missions || !ME.playerId) return "";
+  const me = S.players.find((p) => p.id === ME.playerId);
+  const label = me && me.missionDone === true ? "✅ Mission done. Legend." : me && me.missionDone === false ? "🚨 Busted. Tragic." : "🤫 My secret mission";
+  return `<button class="btn purple ${big ? "big" : ""}" id="mymission">${label}</button>`;
+}
+function wireMyMission() {
+  const b = $("mymission");
+  if (b) b.onclick = async () => { const r = await act(call("mission:mine")); if (r) missionSheet(r); };
+}
+// Your mission, plus the one you wrote for someone else
+function missionSheet(m) {
+  const live = S.phase === "live";
+  const status = m.result === true ? `<p style="margin:0 0 14px"><b>✅ Done.</b> You handed out a forfeit. Unreal.</p>`
+    : m.result === false ? `<p style="margin:0 0 14px"><b>🚨 Busted.</b> Should've been sneakier.</p>` : "";
+  const wrote = !m.wrote ? "" : `<div class="card tight" style="margin:16px 0 0;box-shadow:none;background:var(--white)">
+    <div class="label" style="margin-bottom:6px">The one you wrote</div><b>${esc(m.wrote)}</b>
+    <p class="small" style="margin:8px 0 0">${m.wroteLive ? `Someone's got it. Catch them at it and they get a forfeit. Wrong guess and you get one. ${m.bustsLeft} guess${m.bustsLeft === 1 ? "" : "es"} left.`
+      : m.wroteDone === true ? "They pulled it off. You've been played." : m.wroteDone === false ? "Busted. Justice." : "It got swapped out. Coward."}</p>
+    ${live && m.wroteLive && m.bustsLeft > 0 ? `<button class="btn pink sm" id="bust" style="margin:10px 0 0">🚨 Caught someone doing mine</button>` : ""}</div>`;
+  const ov = openOverlay(`<div class="card" style="background:var(--purple)"><span class="sticker">🤫 Your mission</span>
+    <div class="bigmission">${esc(m.mission || "")}</div>
+    ${m.written ? `<p class="small" style="margin:0 0 10px">Written by someone here 👀 They're watching.</p>` : ""}
+    ${status || `<p class="small" style="margin:0 0 16px">Pull it off and you hand someone a forfeit. Get caught by whoever wrote it and you take one.</p>`}
+    ${live && m.result === null ? `<button class="btn yellow" id="did">🎉 I pulled it off</button>` : ""}
+    <button class="btn ink" id="hide">Hide it</button>
+    ${!m.swapped && m.result === null ? `<button class="btn ghost" id="swap" style="margin:0">Impossible? Swap it (once)</button>` : ""}
+    ${wrote}</div>`);
+  ov.querySelector("#hide").onclick = closeOverlay;
+  const sw = ov.querySelector("#swap");
+  if (sw) sw.onclick = async () => { const r = await act(call("mission:swap")); if (r) missionSheet(r); };
+  const did = ov.querySelector("#did");
+  if (did) did.onclick = () => pickPerson("Who gets your forfeit? 😈", here().filter((p) => p.id !== ME.playerId), async (id) => {
+    if (await act(call("mission:done", { giveTo: id }))) { vibrate(); toast("Mission done 🎉"); }
+  });
+  const bust = ov.querySelector("#bust");
+  if (bust) bust.onclick = () => pickPerson("Who was doing your mission? 🚨", here().filter((p) => p.id !== ME.playerId), async (id) => {
+    const r = await act(call("mission:bust", { playerId: id }));
+    if (r) { vibrate(); toast(r.right ? "Busted them 🚨" : "Wrong. Forfeit for you 🙈"); }
+  });
+}
+// Before the night: write a mission for someone else
+function writeMissionBlock() {
+  if (!S.settings.missions || !ME.playerId || S.phase !== "plan") return "";
+  const me = S.players.find((p) => p.id === ME.playerId), n = S.players.length, w = S.writers || 0;
+  const small = n < 5;
+  return `<div class="card" style="background:var(--purple)"><h3 style="font-size:21px">🤫 Write a secret mission</h3>
+    <p class="small" style="margin:4px 0 12px">${small ? "Once there's 5 of you, the missions you write get shuffled round the group. Nobody gets their own." : "They get shuffled round the group. Nobody gets their own, and you can bust whoever gets yours."} ${w} of ${n} written.</p>
+    ${me && me.wrote && !writingAgain ? `<div class="row"><b style="flex:1">✓ Yours is in. Someone's in trouble.</b><button class="btn sm" id="rewrite" style="flex:0 0 auto;width:auto;margin:0">Rewrite</button></div>`
+      : `<textarea class="input" id="wm" maxlength="140" rows="2" placeholder="Get the barman to call you 'boss'"></textarea><button class="btn ink sm" id="wmsave" style="margin-top:10px">Save it</button>`}</div>`;
+}
+let writingAgain = false;
+function wireWriteMission() {
+  if ($("rewrite")) $("rewrite").onclick = () => { writingAgain = true; render(); };
+  if ($("wmsave")) $("wmsave").onclick = async () => {
+    const text = $("wm").value.trim(); if (!text) { toast("Write something first"); return; }
+    const r = await act(call("mission:write", { text }));
+    if (r) { writingAgain = false; if (document.activeElement) document.activeElement.blur(); toast("Mission saved 🤫"); render(); }
+  };
+}
+// Pick someone from a list (searchable when there's loads of you)
+function pickPerson(title, list, onPick) {
+  const ov = openOverlay(`<div class="card"><h3 style="font-size:22px;margin-bottom:12px">${title}</h3>
+    ${list.length > 12 ? `<input class="input" id="ppq" maxlength="14" placeholder="Search names" autocomplete="off" style="margin-bottom:12px">` : ""}
+    <div class="faces">${list.map((x) => `<button class="face" data-pp="${x.id}" data-name="${esc(x.n.toLowerCase())}">${av(x.n)}${esc(x.n)}</button>`).join("")}</div>
+    <button class="btn ghost" id="ppx" style="margin:16px 0 0">Cancel</button></div>`, true);
+  ov.querySelector("#ppx").onclick = closeOverlay;
+  const q = ov.querySelector("#ppq");
+  if (q) q.oninput = (e) => { const v = e.target.value.trim().toLowerCase(); ov.querySelectorAll("[data-pp]").forEach((b) => { b.style.display = b.dataset.name.includes(v) ? "" : "none"; }); };
+  ov.querySelectorAll("[data-pp]").forEach((b) => (b.onclick = () => { closeOverlay(); onPick(b.dataset.pp); }));
+}
+// Quote of the night: anyone can add one, the host can bin the messers
+function quoteSheet() {
+  const qs = S.quotes || [];
+  const ov = openOverlay(`<div class="card" style="background:var(--yellow)"><h3 style="font-size:22px;margin-bottom:6px">💬 Quote of the night</h3>
+    <p class="small" style="margin:0 0 12px">Someone said something they'll regret? Get it on the recap.</p>
+    <input class="input" id="qt" maxlength="120" placeholder="I'm not even drunk, I'm just Irish">
+    <button class="btn ink" id="qsave" style="margin-top:10px">Put it on the recap</button>
+    ${qs.length ? `<div style="margin-top:14px">${qs.map((q) => `<div class="row" style="margin-bottom:8px"><span style="flex:1;min-width:0">“${esc(q.text)}”<br><small class="muted">added by ${esc(q.byName)}</small></span>${isHost() ? `<button class="btn sm" data-rq="${q.id}" style="flex:0 0 auto;width:auto;margin:0">Bin it</button>` : ""}</div>`).join("")}</div>` : ""}
+    <button class="btn ghost" id="qx" style="margin:12px 0 0">Close</button></div>`, true);
+  ov.querySelector("#qx").onclick = closeOverlay;
+  ov.querySelector("#qsave").onclick = async () => {
+    const text = ov.querySelector("#qt").value.trim(); if (!text) { toast("Type what they said"); return; }
+    if (await act(call("quote:add", { text }))) { closeOverlay(); toast("On the recap 💬"); }
+  };
+  ov.querySelectorAll("[data-rq]").forEach((b) => (b.onclick = async () => { if (await H("quoteRemove", { id: +b.dataset.rq })) closeOverlay(); }));
 }
 function wireGuest() {
-  const b = $("mymission");
-  if (b) b.onclick = async () => {
-    const r = await act(call("mission:mine"));
-    if (r) missionCard("Your mission", r.mission, r.swapped, () => call("mission:swap"));
-  };
+  wireMyMission();
   const m = $("menu");
   if (m) m.onclick = () => menuSheet([
     ...(ME.role === "watcher" && (S.players.some((p) => !p.claimed) || canSelfJoin()) ? [{ label: "🙋 Join in", cls: "yellow", fn: () => { closeOverlay(); watchOnly = false; render(); } }] : []),
@@ -909,6 +990,7 @@ function wireGuest() {
         b.dataset.armed = "1"; b.textContent = "Tap again: I'm heading home"; b.classList.add("pink");
       } }];
     })() : []),
+    ...(S.phase === "live" && ME.playerId ? [{ label: "💬 Quote of the night", cls: "yellow", fn: () => { closeOverlay(); quoteSheet(); } }] : []),
     ...(S.phase === "live" ? [{ label: "🫂 Look after each other", cls: "", fn: () => lookAfterScreen(null, "Back to the night") }] : []),
     { label: "📄 Terms & privacy", cls: "", fn: legalSheet },
     { label: "👋 Leave room", cls: "", fn: leaveRoom },
@@ -921,12 +1003,14 @@ function waitScreen() {
   <div class="card center" style="background:var(--green)">
     <div style="font-size:54px">🍻</div>
     <h2 style="margin:6px 0">${me ? `You're in, ${esc(me.n)}!` : "You're in!"}</h2>
-    <p style="margin:0">The host is picking tonight's rules. This updates by itself.</p>
+    <p style="margin:0">The host is picking tonight's rules. Get a round in, this updates by itself.</p>
   </div>
   ${me ? `<button class="btn yellow" id="mypic">${av(me.n, true)} Pick your emoji or photo</button>` : ""}
+  ${writeMissionBlock()}
   ${myPlantsBlock()}
   <div class="faces">${S.players.map((p) => `<div class="face">${av(p.n)}${esc(p.n)}<small>${p.claimed ? "📱 here" : ""}</small></div>`).join("")}</div>`;
   if ($("mypic")) $("mypic").onclick = editMyPicture;
+  wireWriteMission();
   wireMyPlants();
   wireGuest();
 }
@@ -948,7 +1032,7 @@ function guestLive() {
   ${p.drop ? challengeCard(p.drop, "drop", false) : ""}
   ${plantedCards(false)}
   ${pendingLine(p, false)}
-  <h3 class="h">Forfeits so far</h3>
+  <h3 class="h">The hall of shame</h3>
   ${scores()}
   ${feedLog()}`;
   if ($("imback")) $("imback").onclick = () => act(call("player:back"));
@@ -959,9 +1043,9 @@ function guestLive() {
 
 function revealGuest() {
   app.innerHTML = `${topBar()}
-  <h2>🤫 Mission reveal</h2><p class="muted" style="margin:6px 0 18px">Results pop up as the host goes round.</p>
+  <h2>🤫 The reveal</h2><p class="muted" style="margin:6px 0 18px">Who pulled it off, who got busted, who never even tried.</p>
   ${S.players.map((p, i) => `<div class="card" style="background:${playerColor(i)}"><div class="row" style="justify-content:flex-start"><span style="flex:0">${av(p.n)}</span><b class="display" style="font-size:20px">${esc(p.n)}</b><span style="flex:0;font-size:26px">${p.mission && p.mission.result === true ? "✅" : p.mission && p.mission.result === false ? "❌" : "⏳"}</span></div>
-    <p style="font:800 17px/1.3 var(--body);margin:10px 0 0">${esc(p.mission ? p.mission.text : "")}</p></div>`).join("")}`;
+    <p style="font:800 17px/1.3 var(--body);margin:10px 0 0">${esc(p.mission ? p.mission.text : "")}</p>${missionBy(p)}</div>`).join("")}`;
   wireGuest();
 }
 
@@ -985,7 +1069,7 @@ let slides = [], slideIdx = 0, slidesKey = "";
 function recapScreen() {
   const st = nightStats(S), tt = titles(S), myId = ME.playerId || null;
   const photos = Object.fromEntries(S.players.map((p) => [p.id, getPhoto(S.code, p.id)]).filter(([, u]) => u));
-  const key = JSON.stringify([S.code, hideNames, S.players.map((p) => [p.forf, p.skips, p.chall, p.emoji, p.mission && p.mission.result, (photos[p.id] || "").length]), (S.plants || []).length, S.players.map((p) => [p.joinedPub, p.leftPub])]);
+  const key = JSON.stringify([S.code, hideNames, S.players.map((p) => [p.forf, p.skips, p.chall, p.emoji, p.mission && p.mission.result, (photos[p.id] || "").length]), (S.plants || []).length, S.players.map((p) => [p.joinedPub, p.leftPub]), (S.quotes || []).map((q) => q.id), (S.catches || []).length, S.settings.crew]);
   app.innerHTML = `
   <div class="center" style="padding:4px 0 14px"><h2>${st.visited >= 12 ? "You made it! 🏆" : `${st.visited} pubs! 🍻`}</h2>
     ${st.visited < 12 && st.lastPub ? `<p class="muted" style="margin:6px 0 0">Called it at ${esc(st.lastPub)}. Still counts.</p>` : ""}
@@ -1002,12 +1086,14 @@ function recapScreen() {
   <h3 class="h">Everyone's title</h3>
   <div class="card">${S.players.map((p) => `<div class="mrow">${av(p.n, true)}<div><b>${esc(displayName(S, p.n, hideNames))}</b><div class="small">${tt[p.id].em} ${esc(tt[p.id].t)}${comingsAndGoings(S, p) ? ` · ${esc(comingsAndGoings(S, p))}` : ""}</div></div></div>`).join("")}</div>
   <div class="card tight"><div class="toggle"><span><b>Hide names</b><small>Shows Player 1, 2, 3… on the images</small></span><button class="switch" id="hide" aria-pressed="${hideNames}"></button></div></div>
+  ${ME.playerId ? `<button class="btn yellow" id="addquote">💬 ${(S.quotes || []).length ? "Add another quote" : "Add the quote of the night"}</button>` : ""}
   <button class="btn ghost" id="copyr">Copy as text</button>
   ${bar(`<button class="btn yellow big" id="again">${isHost() ? "Start another night" : "Done 👋"}</button>`)}`;
 
   tickExpiry();
   $("hide").onclick = () => { hideNames = !hideNames; render(); };
   $("copyr").onclick = () => copyText(recapText(S, hideNames), "Recap copied");
+  if ($("addquote")) $("addquote").onclick = quoteSheet;
   $("again").onclick = () => { const wasHost = isHost(); leaveRoom(); if (wasHost) { view = "setup"; render(); } };
 
   const date = new Date(S.startAt || Date.now()).toISOString().slice(0, 10);

@@ -26,6 +26,7 @@ export function createRoomState(code, input = {}, rng = Math.random) {
     surprise: s.surprise !== false,
     drinkF: s.drinkF === true,
     tokens: [0, 1, 2].includes(s.tokens) ? s.tokens : 2,
+    crew: clean(s.crew, 30), // the group's name, e.g. "Sinéad's 30th"
   };
   if (!settings.cats.length) settings.cats = G.CATS.slice();
 
@@ -52,7 +53,7 @@ export function createRoomState(code, input = {}, rng = Math.random) {
   const state = {
     code, hostToken: newToken(), createdAt: now, updatedAt: now,
     phase: "plan", settings, players, plan: G.buildPlan(settings, pubs, rng),
-    pub: -1, forfeits: [], catches: [], feed: [], startAt: null, endAt: null, nextId: 1,
+    pub: -1, forfeits: [], catches: [], quotes: [], feed: [], startAt: null, endAt: null, nextId: 1,
     plants: [], // surprises people plant before the night (see "Plant a surprise" below)
   };
   if (settings.missions) players.forEach((p) => (p.mission = G.dealMission(players, p.n, null, rng)));
@@ -65,12 +66,17 @@ export function publicState(state) {
   return {
     code: state.code, phase: state.phase, settings: state.settings, pub: state.pub, expiresAt: state.expiresAt || null,
     startAt: state.startAt, endAt: state.endAt, feed: state.feed, forfeits: state.forfeits,
-    catches: (state.catches || []).filter((c) => !c.removed).slice(0, 30).map((c) => ({ id: c.id, playerId: c.playerId, n: c.n, by: c.by, pub: c.pub })),
+    catches: (state.catches || []).filter((c) => !c.removed).slice(0, showMissions ? 5000 : 30)
+      .map((c) => ({ id: c.id, playerId: c.playerId, n: c.n, by: c.by, byId: c.byId, pub: c.pub, at: c.at, why: c.why || null })),
+    quotes: (state.quotes || []).map((q) => ({ id: q.id, by: q.by, byName: q.byName, text: q.text })),
+    writers: state.phase === "plan" ? state.players.filter((p) => p.wrote).length : null,
     players: state.players.map((p) => ({
       id: p.id, n: p.n, c: p.c, emoji: p.emoji || null, tokens: p.tokens, forf: p.forf, skips: p.skips, chall: p.chall,
-      claimed: !!p.claimToken, missionSeen: !!(p.mission && p.mission.seen),
+      claimed: !!p.claimToken, missionSeen: !!(p.mission && p.mission.seen), wrote: !!p.wrote,
+      // that a mission was done or busted is news on the night; what it said stays secret till the end
+      missionDone: p.mission ? p.mission.result : null,
       joinedPub: p.joinedPub || 0, leftPub: p.leftPub ?? null,
-      mission: showMissions && p.mission ? { text: p.mission.text, result: p.mission.result } : null,
+      mission: showMissions && p.mission ? { text: p.mission.text, result: p.mission.result, byName: p.mission.byName || null, busted: !!p.mission.busted, bustedBy: p.mission.bustedBy || null } : null,
     })),
     plan: state.plan.map((p, i) => ({
       name: p.name, street: p.street, lat: p.lat, lng: p.lng, generic: p.generic, type: p.type, rule: p.rule,
@@ -188,6 +194,7 @@ export const HOST_ACTIONS = {
     needPhase(state, "plan");
     if (state.players.length < 2) fail("Wait for at least one more person to join");
     state.startAt = Date.now();
+    if (state.settings.missions) dealWrittenMissions(state);
     if (state.settings.missions) { state.phase = "missions"; return {}; }
     state.phase = "live"; arrive(state, 0); return { schedule: true };
   },
@@ -271,6 +278,7 @@ export const HOST_ACTIONS = {
     pl.mission.result = result === true ? true : result === false ? false : null;
     return {};
   },
+  quoteRemove(state, { id }) { state.quotes = (state.quotes || []).filter((q) => q.id !== id); return {}; },
   revealDone(state) { needPhase(state, "reveal"); state.phase = "recap"; state.expiresAt = Date.now() + RECAP_TTL; return {}; },
   // Pass-the-phone mode: the host's phone shows one person's mission
   peek(state, { playerId }) {
@@ -343,15 +351,16 @@ export function myMission(state, playerId) {
   if (!pl.mission) fail("Missions are off");
   if (state.phase === "plan") fail("Missions unlock when the night starts");
   pl.mission.seen = true;
-  return { mission: pl.mission.text, swapped: pl.mission.swapped };
+  return missionInfo(state, playerId);
 }
 export function swapMission(state, playerId) {
   const pl = player(state, playerId);
   if (!pl.mission) fail("Missions are off");
   if (pl.mission.swapped) fail("You've already swapped once");
   if (!["missions", "live"].includes(state.phase)) fail("Not right now");
+  if (pl.mission.result !== null) fail("Too late to swap it");
   pl.mission = { ...G.dealMission(state.players, pl.n, pl.mission.base), seen: true, swapped: true };
-  return { mission: pl.mission.text, swapped: true };
+  return missionInfo(state, playerId);
 }
 
 export function setEmoji(state, playerId, emoji) {
@@ -366,16 +375,100 @@ function recordCatch(state, playerId, by) {
   if (current(state).type !== "rule") fail("No rules at this stop 🙂");
   const pl = player(state, playerId);
   if (!isHere(state, pl)) fail(`${pl.n} has headed home`);
-  pl.forf++; current(state).forf++;
   const r = current(state).rule;
   let plantId = null;
   if (r && r.plantId) { const x = state.plants.find((y) => y.id === r.plantId); if (x) { x.breaks++; plantId = x.id; } } // counts for whoever planted it
+  return giveForfeit(state, pl, by, { plantId });
+}
+// Every forfeit goes through here: a rule catch, a pulled-off mission, a busted one
+function giveForfeit(state, pl, by, { plantId = null, why = null, line = null } = {}) {
+  pl.forf++; if (state.plan[state.pub]) state.plan[state.pub].forf = (state.plan[state.pub].forf || 0) + 1;
   const f = G.pickForfeit(state.settings);
-  const c = { id: state.nextId++, playerId: pl.id, n: pl.n, by: by ? by.n : null, byId: by ? by.id : null, pub: state.pub, plantId, at: Date.now(), removed: false, skipped: false };
+  const c = { id: state.nextId++, playerId: pl.id, n: pl.n, by: by ? by.n : null, byId: by ? by.id : null, pub: state.pub, plantId, why, at: Date.now(), removed: false, skipped: false };
   (state.catches ||= []).unshift(c);
   state.forfeits.unshift({ id: state.nextId++, catchId: c.id, playerId: pl.id, n: pl.n, by: c.by, text: f.text, int: f.int, fid: f.id, rerolled: false });
-  feed(state, pl.n, by && by.id !== pl.id ? `got caught by ${by.n}: ${f.text}` : `got caught: ${f.text}`);
+  feed(state, line ? null : pl.n, line ? `${line} ${f.text}` : by && by.id !== pl.id ? `got caught by ${by.n}: ${f.text}` : `got caught: ${f.text}`);
   return { buzz: { kind: "forfeit", playerId: pl.id } };
+}
+
+/* ---------- secret missions written by the group ---------- */
+export const WRITE_MIN_PLAYERS = 5; // under this you'd know who wrote yours
+export function writeMission(state, playerId, text) {
+  if (!state.settings.missions) fail("Missions are off tonight");
+  if (state.phase !== "plan") fail("Too late, missions have been handed out");
+  const t = clean(text, 140);
+  if (t && t.length < 8) fail("Make it a bit longer than that");
+  player(state, playerId).wrote = t || null;
+}
+// Shuffle what people wrote so nobody gets their own; everyone else gets one from our list
+export function dealWrittenMissions(state, rng = Math.random) {
+  const ps = state.players, written = ps.filter((p) => p.wrote);
+  if (ps.length < WRITE_MIN_PLAYERS || !written.length) return;
+  for (let tries = 0; tries < 200; tries++) {
+    const free = ps.slice(), out = new Map();
+    let ok = true;
+    for (const w of written.slice().sort(() => rng() - 0.5)) {
+      const options = free.filter((p) => p.id !== w.id);
+      if (!options.length) { ok = false; break; }
+      const to = options[Math.floor(rng() * options.length)];
+      free.splice(free.indexOf(to), 1); out.set(to.id, w);
+    }
+    if (!ok) continue;
+    for (const p of ps) {
+      const w = out.get(p.id);
+      if (w) p.mission = { base: null, text: w.wrote, by: w.id, byName: w.n, seen: false, swapped: false, result: null };
+    }
+    return;
+  }
+}
+export function missionInfo(state, playerId) {
+  const pl = player(state, playerId);
+  const mine = state.players.find((p) => p.mission && p.mission.by === pl.id);
+  return {
+    mission: pl.mission ? pl.mission.text : null, swapped: pl.mission ? pl.mission.swapped : false,
+    written: !!(pl.mission && pl.mission.by), result: pl.mission ? pl.mission.result : null,
+    wrote: pl.wrote || null, wroteLive: !!(mine && mine.mission.result === null), wroteDone: mine ? mine.mission.result : null,
+    bustsLeft: 2 - (pl.busts || 0),
+  };
+}
+// "I pulled it off": you get to hand someone a forfeit
+export function missionDone(state, playerId, giveTo) {
+  needPhase(state, "live");
+  const pl = player(state, playerId);
+  if (!pl.mission) fail("Missions are off");
+  if (pl.mission.result !== null) fail(pl.mission.busted ? "You got busted, sorry" : "You've already done it");
+  const to = player(state, giveTo);
+  if (to.id === pl.id) fail("Give it to someone else");
+  if (!isHere(state, to)) fail(`${to.n} has headed home`);
+  pl.mission.result = true; pl.mission.doneAt = Date.now();
+  return giveForfeit(state, to, pl, { why: "mission", line: `🤫 ${pl.n} pulled off their secret mission and gave ${to.n} a forfeit:` });
+}
+// The writer caught someone doing their mission. Wrong guess and the writer pays.
+export function bustMission(state, writerId, suspectId) {
+  needPhase(state, "live");
+  const w = player(state, writerId), sus = player(state, suspectId);
+  if (!w.wrote) fail("You didn't write a mission");
+  const holder = state.players.find((p) => p.mission && p.mission.by === w.id);
+  if (!holder) fail("Nobody has your mission any more");
+  if (holder.mission.result !== null) fail(holder.mission.result ? "Too late, they already pulled it off" : "Already busted");
+  if ((w.busts || 0) >= 2) fail("You've used both your guesses");
+  if (sus.id === w.id) fail("Nice try");
+  if (sus.id === holder.id) {
+    holder.mission.result = false; holder.mission.busted = true; holder.mission.bustedBy = w.n;
+    return { right: true, ...giveForfeit(state, sus, w, { why: "bust", line: `🚨 ${w.n} busted ${sus.n} doing their secret mission:` }) };
+  }
+  w.busts = (w.busts || 0) + 1;
+  return { right: false, ...giveForfeit(state, w, null, { why: "wrong", line: `🙈 ${w.n} accused ${sus.n} of doing their mission. Wrong. Forfeit for ${w.n}:` }) };
+}
+
+/* ---------- quote of the night ---------- */
+export function addQuote(state, playerId, text) {
+  if (!["live", "reveal", "recap"].includes(state.phase)) fail("Save it for the night");
+  const pl = player(state, playerId), t = clean(text, 120);
+  if (t.length < 3) fail("Type what they said");
+  state.quotes = (state.quotes || []).filter((q) => q.by !== pl.id);
+  state.quotes.push({ id: state.nextId++, by: pl.id, byName: pl.n, text: t.replace(/^["“”']+|["“”']+$/g, "") });
+  if (state.quotes.length > 20) state.quotes.shift();
 }
 // Anyone playing can report a catch from their own phone
 export function reportCatch(state, reporterId, playerId) {
