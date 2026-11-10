@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as G from "../server/game.js";
 import { createRoomState, publicState, HOST_ACTIONS as H, claimPlayer, myMission, swapMission, revealDrop, addPlant, myPlants, removePlant, nextEventAt, revealDue, isHere, makeTakeover, useTakeover, selfJoin, reportCatch, ownForfeit, writeMission, dealWrittenMissions, missionDone, bustMission, missionInfo, addQuote } from "../server/room.js";
 
-const settings = (o = {}) => ({ mode: "classic", cats: G.CATS.slice(), missions: true, surprise: true, drinkF: false, tokens: 2, ...o });
+const settings = (o = {}) => ({ mode: "classic", cats: G.CATS.slice(), missions: true, challenges: true, drinkF: false, tokens: 2, ...o });
 const room = (o = {}) => createRoomState("TEST", { settings: settings(o), players: ["Harry", "Aoife", "Cian", "Niamh"], pubs: [{ name: "The Crane Bar" }] });
 
 test("content loaded", () => {
@@ -484,4 +484,61 @@ test("recap: nemesis, victim and peak chaos come from who caught who", async () 
   assert.match(receipts(P, P.players[0], false)[0], /Nemesis: P1, caught you 3×/);
   assert.deepEqual(rivals(P, P.players[1]).victim, { ids: ["p0"], n: 3 });
   assert.equal(nightStats(P).peak.n, 4);
+});
+
+test("traditional by default: a rule and a forfeit, no challenges or missions unless the host turns them on", () => {
+  for (let k = 0; k < 20; k++) {
+    const s = createRoomState("T", { settings: { mode: "hard" }, players: ["A", "B"] });
+    assert.equal(s.settings.missions, false);
+    assert.equal(s.settings.challenges, false);
+    assert.ok(s.plan.every((p) => !p.arrive && !p.drop), "no challenges anywhere");
+    assert.ok(s.players.every((p) => !p.mission), "no missions dealt");
+    assert.ok(s.plan.filter((p) => p.type === "rule").every((p) => p.rule), "still a rule at every pub");
+  }
+  // turned on, they're there
+  const on = createRoomState("T", { settings: { mode: "hard", challenges: true, missions: true }, players: ["A", "B"] });
+  assert.ok(on.plan.some((p) => p.arrive), "challenges when asked for");
+  assert.ok(on.players.every((p) => p.mission));
+  // a phone still on the old setup screen sends `surprise`
+  assert.equal(createRoomState("T", { settings: { surprise: true }, players: ["A"] }).settings.challenges, true);
+  assert.equal(createRoomState("T", { settings: { surprise: false }, players: ["A"] }).settings.challenges, false);
+});
+
+test("with challenges off you can only plant a rule", () => {
+  const s = room({ missions: false, challenges: false });
+  assert.throws(() => addPlant(s, "p1", "challenge", "Sing for the bar"), /Challenges are off/);
+  assert.equal(addPlant(s, "p1", "rule", "No saying yes").kind, "rule");
+});
+
+test("recap: the rule at every pub, how often it was broken, and whose downfall it was", async () => {
+  const { ruleBreaks, nightStats } = await import("../public/js/recap.js");
+  const s = toLive(group(5, false));
+  // reporter first: P0 gets caught twice, P2 once
+  reportCatch(s, "p1", "p0"); s.catches.forEach((c) => (c.at -= 70000));
+  reportCatch(s, "p1", "p2"); reportCatch(s, "p3", "p0");
+  // a forfeit from a mission doesn't count as breaking the rule
+  s.catches.unshift({ id: 999, playerId: "p4", n: "P4", pub: 0, why: "mission", at: Date.now(), removed: false });
+  H.next(s); // pub 2: nobody gets caught
+  const P = publicState(s);
+  const rb = ruleBreaks(P);
+  assert.deepEqual(rb.map((r) => r.i), [0, 1]);
+  assert.equal(rb[0].text, s.plan[0].rule.text);
+  assert.equal(rb[0].n, 3);
+  assert.deepEqual(rb[0].downfall, { ids: ["p0"], n: 2 });
+  assert.equal(rb[1].n, 0);
+  const st = nightStats(P);
+  assert.equal(st.rulesBroken, 3);
+  assert.equal(st.caught, 2);
+  assert.equal(st.ruleThatGotYou.n, 3);
+});
+
+test("recap: drinks are one each per pub you were actually there for", async () => {
+  const { nightStats } = await import("../public/js/recap.js");
+  const s = toLive(group(3, false));
+  for (let i = 1; i < 6; i++) H.next(s); // 6 pubs reached
+  H.leave(s, { playerId: "p2" }); // P2 heads home during pub 6
+  const P = publicState(s);
+  assert.equal(nightStats(P).drinks, 6 + 6 + 6);
+  P.players[2].leftPub = 2; // left after pub 3
+  assert.equal(nightStats(P).drinks, 6 + 6 + 3);
 });

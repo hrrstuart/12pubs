@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const dayKey = (t = Date.now()) => new Date(t).toLocaleDateString("en-CA", { timeZone: "Europe/Dublin" }); // YYYY-MM-DD
-const blankDay = () => ({ visits: 0, created: 0, started: 0, finished: 0, finishedAll: 0, players: 0, joins: 0, pubs: 0, downloads: 0, shares: 0, missionsOn: 0, plants: 0, plantsPlayed: 0, lateJoins: 0, leftEarly: 0, handovers: 0, modes: {}, sources: {} });
+const blankDay = () => ({ visits: 0, created: 0, started: 0, finished: 0, finishedAll: 0, players: 0, joins: 0, pubs: 0, downloads: 0, shares: 0, missionsOn: 0, challengesOn: 0, plants: 0, plantsPlayed: 0, lateJoins: 0, leftEarly: 0, handovers: 0, modes: {}, sources: {} });
 
 export class Stats {
   constructor(file) {
@@ -27,6 +27,7 @@ export class Stats {
     d.modes[state.settings.mode] = (d.modes[state.settings.mode] || 0) + 1;
     d.sources[pubSource] = (d.sources[pubSource] || 0) + 1;
     if (state.settings.missions) d.missionsOn++;
+    if (state.settings.challenges) d.challengesOn = (d.challengesOn || 0) + 1;
     this.save();
   }
   nightFinished(state, t) {
@@ -99,6 +100,7 @@ export function dashboardHtml({ total: T, series, since }) {
   <div class="mrow"><b>Average group</b><span class="res">${avgGroup} people</span></div>
   <div class="mrow"><b>Mates who joined on their own phone</b><span class="res">${T.joins} · ${pct(T.joins, T.players)} of players</span></div>
   <div class="mrow"><b>Secret missions on</b><span class="res">${pct(T.missionsOn, T.created)} of nights</span></div>
+  <div class="mrow"><b>Challenges on</b><span class="res">${pct(T.challengesOn || 0, T.created)} of nights</span></div>
   <div class="mrow"><b>Surprises planted</b><span class="res">${T.plants} · ${T.plantsPlayed} popped up</span></div>
   <div class="mrow"><b>Comings and goings</b><span class="res">${T.lateJoins} joined late · ${T.leftEarly} left early · ${T.handovers} host swaps</span></div>
   <div class="mrow"><b>Average pubs reached</b><span class="res">${T.finished ? (T.pubs / T.finished).toFixed(1) : "–"}</span></div>

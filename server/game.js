@@ -120,8 +120,8 @@ export function buildPlan(settings, pubs, rng = Math.random) {
       type, rule: null, arrive: null, drop: null, arrivedAt: null, dropAt: null, dropShown: false, picked: null, forf: 0 };
     if (type === "rule") {
       o.rule = pickRule(settings, i, usedR, prev, rng); usedR.add(o.rule.id); prev = o.rule.cat;
-      if (rng() < M.arrive) o.arrive = pickChallenge(settings, i, "arrival", usedC, rng);
-      if (settings.surprise && rng() < M.drop) o.drop = pickChallenge(settings, i, "drop", usedC, rng);
+      if (settings.challenges && rng() < M.arrive) o.arrive = pickChallenge(settings, i, "arrival", usedC, rng);
+      if (settings.challenges && rng() < M.drop) o.drop = pickChallenge(settings, i, "drop", usedC, rng);
     }
     return o;
   });

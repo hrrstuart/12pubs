@@ -19,11 +19,16 @@ const JUST_CAUGHT_MS = 10000;   // two mates tapping at once only counts once
 /* ---------- creating a room ---------- */
 export function createRoomState(code, input = {}, rng = Math.random) {
   const s = input.settings || {};
+  // The traditional night is just a rule and a forfeit at every pub. Challenges (the dare on arrival
+  // and the surprise drops) and secret missions are extras the host turns on. Phones still running
+  // the old setup screen send `surprise` instead of `challenges`.
+  const challenges = typeof s.challenges === "boolean" ? s.challenges : s.surprise === true;
   const settings = {
     mode: G.MODES[s.mode] ? s.mode : "classic",
     cats: Array.isArray(s.cats) ? s.cats.filter((c) => G.CATS.includes(c)) : [],
-    missions: s.missions !== false,
-    surprise: s.surprise !== false,
+    missions: s.missions === true,
+    challenges,
+    surprise: challenges, // older name, kept so anything reading it still works
     drinkF: s.drinkF === true,
     tokens: [0, 1, 2].includes(s.tokens) ? s.tokens : 2,
     crew: clean(s.crew, 30), // the group's name, e.g. "Sinéad's 30th"
@@ -316,6 +321,7 @@ export function addPlant(state, playerId, kind, text, rng = Math.random) {
   if (state.pub >= 0 || !["plan", "missions"].includes(state.phase)) fail("Surprises are planted before the night starts");
   const pl = player(state, playerId);
   if (kind !== "rule" && kind !== "challenge") fail("Pick a rule or a challenge");
+  if (kind === "challenge" && state.settings.challenges === false) fail("Challenges are off tonight, plant a rule instead");
   const t = clean(text, 140);
   if (t.length < 3) fail("Write your surprise first");
   state.plants ||= [];

@@ -235,6 +235,37 @@ function gateScreen() {
   $("terms").onclick = legalSheet;
 }
 
+/* ---------- What's what: on the home page, and in the ⋯ menu during a night ---------- */
+// `on` = the night's settings, to leave out what's switched off. Without it, everything shows (home page).
+function whatsWhat(on) {
+  const all = !on, ch = all || on.challenges !== false, mi = all || on.missions;
+  const opt = all ? ` <span class="small" style="font:700 12px var(--display);background:var(--yellow);border:2px solid var(--ink);border-radius:20px;padding:1px 8px;margin-left:4px">optional</span>` : "";
+  const items = [
+    ["📜", "The rule", "Every pub gets one daft rule, like no first names or no pointing. It lasts till you leave that pub." + (all || on.mode === "hard" ? " On Savage, each rule sticks around for 3 pubs, so they pile up." : "")],
+    ["🙈", "Getting caught", "Spot someone breaking the rule? Tap who got caught on any phone. They get a forfeit."],
+    ["🎲", "Forfeits", `Something daft the app picks for whoever got caught. You get one re-roll.${all || !on.drinkF ? " Forfeits never mean drinking more unless the host turns drinking forfeits on." : ""}`],
+    ["🎟", "Skip tokens", all ? "The host gives everyone 0, 1 or 2. Spend one to dodge a forfeit or a challenge." : `Everyone has ${on.tokens}. Spend one to dodge a forfeit${ch ? " or a challenge" : ""}.`],
+    ["💧", "The stops", "Pub 4 is a water stop, pub 8 is a food stop, and pub 12 is the finale: all rules lifted."],
+    ["🎁", "Planted surprises", `Before the first pub, anyone can plant up to 2 secret rules${ch ? " or challenges" : ""}. Each lands on a random pub and pops up 5 to 15 minutes in. Every catch under your rule counts for you.`],
+    ...(ch ? [["🎯", "Challenges" + opt, "A dare when you walk in, for one person or the whole group, and surprise ones dropped 10 to 20 minutes into some pubs. Do it, or spend a skip token."]] : []),
+    ...(mi ? [["🤫", "Secret missions" + opt, "Everyone gets a secret job for the night. Pull it off and you give anyone a forfeit. With 5 or more of you, everyone writes one for someone else, and the writer gets 2 guesses to bust whoever has it. Guess wrong and the forfeit's yours."]] : []),
+  ];
+  return items.map(([em, t, d]) => `<div class="mrow" style="align-items:flex-start"><span style="font-size:24px;flex:0 0 34px">${em}</span><div><b>${t}</b><div class="small">${d}</div></div></div>`).join("");
+}
+function howSheet() {
+  const p = S.plan[S.pub], rules = activeRules();
+  const now = S.phase !== "live" || !p ? ""
+    : p.type !== "rule" ? `<div class="rule special" style="margin-bottom:14px"><div class="label">${SPECIAL[p.type].em} ${SPECIAL[p.type].tag}</div><p>${esc(SPECIAL[p.type].text)}</p></div>`
+    : `<div class="rule" style="margin-bottom:14px"><span class="label">📜 ${rules.length > 1 ? "Rules right now" : "The rule right now"}</span>${rules.map((r) => `<p>${esc(r)}</p>`).join("")}</div>`;
+  const mode = { chill: "Chill", classic: "Classic", hard: "Savage" }[S.settings.mode];
+  const ov = openOverlay(`<div class="card">
+    <h2 style="margin-bottom:4px">How it works</h2>
+    <p class="small muted" style="margin:0 0 14px">Tonight: ${mode} · challenges ${S.settings.challenges !== false ? "on" : "off"} · secret missions ${S.settings.missions ? "on" : "off"}</p>
+    ${now}${whatsWhat(S.settings)}
+    <button class="btn ghost" id="close" style="margin:14px 0 0">Back to the night</button></div>`, true);
+  ov.querySelector("#close").onclick = closeOverlay;
+}
+
 function legalSheet() {
   const ov = openOverlay(`<div class="card legal">
     <h2>Terms & privacy</h2>
@@ -305,9 +336,13 @@ function homeScreen() {
     <h3 style="font-size:22px;margin-bottom:12px">How it works</h3>
     ${[["One person starts a night", "Pick how savage you want it. Takes a couple of minutes."],
        ["Everyone else scans the code", "No app and no sign-up. Just type your name."],
-       ["Go to the pub", "Every pub gets a new rule. Catch someone breaking it and they get a forfeit. Expect surprises and a secret mission."],
+       ["Go to the pub", "Every pub gets a new rule. Catch someone breaking it and they get a forfeit. Want more? Turn on challenges and secret missions."],
        ["Get your recap", "At the end, everyone gets a card to post. Stop whenever you like, it still counts."]]
       .map(([t, d], i) => `<div class="step" style="margin-bottom:2px"><span class="num">${i + 1}</span><h3>${t}</h3></div><p class="small" style="margin:0 0 14px">${d}</p>`).join("")}
+  </div>
+  <div class="card">
+    <h3 style="font-size:22px;margin-bottom:8px">What's what</h3>
+    ${whatsWhat()}
   </div>
   <div class="card" style="background:var(--yellow)">
     <b class="display" style="font-size:20px">⏰ Start it on the day</b>
@@ -330,7 +365,7 @@ async function loadRoute() {
   setupScreen();
 }
 function setupScreen() {
-  D = D || { crew: "", players: [""], emojis: [], photos: [], mode: "classic", cats: CATS.map((c) => c[0]), missions: true, surprise: true, drinkF: false, tokens: 2, pubMode: "go", typed: Array(12).fill(""), start: "trinity", route: null };
+  D = D || { crew: "", players: [""], emojis: [], photos: [], mode: "classic", cats: CATS.map((c) => c[0]), missions: false, challenges: false, drinkF: false, tokens: 2, pubMode: "go", typed: Array(12).fill(""), start: "trinity", route: null };
   const d = D;
   const sw = (k) => `<button class="switch" data-sw="${k}" aria-pressed="${d[k]}" aria-label="${k}"></button>`;
   const step = (n, t) => `<div class="step"><span class="num">${n}</span><h3>${t}</h3></div>`;
@@ -362,9 +397,10 @@ function setupScreen() {
     <div class="chips">${CATS.map(([k, l]) => `<button class="chip" data-cat="${k}" aria-pressed="${d.cats.includes(k)}">${l}</button>`).join("")}</div>
   </div>
 
-  <div class="card">${step(3, "Extras")}
+  <div class="card">${step(3, "Extras (optional)")}
+    <p class="small muted" style="margin:0 0 10px">The proper 12 Pubs is a rule and a forfeit at every pub. That's the night. Turn these on if you want more going on.</p>
+    <div class="toggle"><span><b>🎯 Challenges</b><small>A dare when you walk in, and surprise ones dropped mid-pint</small></span>${sw("challenges")}</div>
     <div class="toggle"><span><b>🤫 Secret missions</b><small>Everyone gets one, revealed at the end</small></span>${sw("missions")}</div>
-    <div class="toggle"><span><b>⚡ Surprise challenges</b><small>Dropped mid-pint, no warning</small></span>${sw("surprise")}</div>
     <div class="toggle"><span><b>🍺 Drinking forfeits</b><small>Off = forfeits never mean drinking more</small></span>${sw("drinkF")}</div>
     <div class="toggle"><span><b>🎟 Skip tokens each</b><small>Dodge one forfeit or challenge</small></span><div class="stepper">${[0, 1, 2].map((n) => `<button data-tok="${n}" aria-pressed="${d.tokens === n}">${n}</button>`).join("")}</div></div>
   </div>
@@ -415,7 +451,7 @@ async function createNight() {
   const pubs = d.pubMode === "dublin" && d.route ? d.route.route
     : d.pubMode === "type" ? d.typed.map((name) => ({ name: name.trim() })) : [];
   const btn = $("create"); btn.disabled = true;
-  const r = await act(call("room:create", { settings: { mode: d.mode, cats: d.cats, missions: d.missions, surprise: d.surprise, drinkF: d.drinkF, tokens: d.tokens, crew: (d.crew || "").trim() }, players, pubs }));
+  const r = await act(call("room:create", { settings: { mode: d.mode, cats: d.cats, missions: d.missions, challenges: d.challenges, drinkF: d.drinkF, tokens: d.tokens, crew: (d.crew || "").trim() }, players, pubs }));
   btn.disabled = false;
   if (!r) return;
   ME = { code: r.code, role: "host", hostToken: r.hostToken, playerId: r.playerId, playerToken: r.playerToken }; saveSession(ME);
@@ -648,12 +684,13 @@ function menuSheet(items) {
 /* ---------- Plant a surprise ---------- */
 function plantForm(who, onSubmit) {
   let kind = "rule";
+  const both = S.settings.challenges !== false; // with challenges off you can only plant a rule
   const ov = openOverlay(`<div class="card" style="background:var(--orange)">
-    <span class="sticker">🎁 Plant a surprise${who ? ` · ${esc(who)}` : ""}</span>
-    <div class="tiles" style="grid-template-columns:1fr 1fr;margin:16px 0 12px">
+    <span class="sticker">🎁 Plant a ${both ? "surprise" : "secret rule"}${who ? ` · ${esc(who)}` : ""}</span>
+    ${both ? `<div class="tiles" style="grid-template-columns:1fr 1fr;margin:16px 0 12px">
       <button class="tile" data-k="rule" aria-pressed="true"><span class="em">📜</span>A rule</button>
       <button class="tile" data-k="challenge" aria-pressed="false"><span class="em">🎯</span>A challenge</button>
-    </div>
+    </div>` : `<div style="height:14px"></div>`}
     <textarea class="input" id="ptext" rows="3" maxlength="140" placeholder="e.g. Everyone has to call Cian 'Your Majesty'"></textarea>
     <p class="small" style="margin:10px 0 14px">It lands on a random pub and pops up mid-pint. The host OKs it without seeing it. Keep it fun, not mean.</p>
     <button class="btn ink" id="psend">Plant it 🎁</button>
@@ -719,7 +756,7 @@ function myPlantsBlock() {
   if (ME.role !== "player" || S.pub >= 0) return "";
   const mine = (S.plants || []).filter((x) => x.by === ME.playerId);
   return `<div class="card" style="background:var(--orange)"><h3 style="font-size:21px">🎁 Plant a surprise</h3>
-    <p class="small" style="margin:4px 0 12px">A secret rule or challenge that pops up at a random pub. Up to 2.</p>
+    <p class="small" style="margin:4px 0 12px">A secret ${S.settings.challenges !== false ? "rule or challenge" : "rule"} that pops up at a random pub. Up to 2.</p>
     ${mine.map((x) => `<div class="mrow" style="align-items:center"><div style="flex:1"><b>Your ${x.kind}</b><div class="small">Pub ${x.pub + 1} · ${x.status === "approved" ? "✓ OK'd" : "waiting for the host"}</div></div><button class="linkbtn" data-unplant="${x.id}">remove</button></div>`).join("")}
     ${mine.length < 2 ? `<button class="btn ink sm" id="myplant" style="margin-top:${mine.length ? 10 : 0}px">🎁 Plant one</button>` : ""}</div>`;
 }
@@ -819,6 +856,7 @@ function liveHost() {
   $("next").onclick = () => H(last ? "finish" : "next");
   wireMyMission();
   $("menu").onclick = () => menuSheet([
+    { label: "📜 How it works", cls: "", fn: howSheet },
     { label: `📱 Invite mates (code ${esc(S.code)})`, cls: "blue", fn: inviteSheet },
     ...(S.players.length < MAX_PLAYERS ? [{ label: "👋 Someone's joined", cls: "green", fn: addPlayerSheet }] : []),
     { label: "🛌 Someone's heading home", cls: "", fn: leaveSheet },
@@ -990,6 +1028,7 @@ function wireGuest() {
         b.dataset.armed = "1"; b.textContent = "Tap again: I'm heading home"; b.classList.add("pink");
       } }];
     })() : []),
+    ...(S.phase !== "recap" ? [{ label: "📜 How it works", cls: "", fn: howSheet }] : []),
     ...(S.phase === "live" && ME.playerId ? [{ label: "💬 Quote of the night", cls: "yellow", fn: () => { closeOverlay(); quoteSheet(); } }] : []),
     ...(S.phase === "live" ? [{ label: "🫂 Look after each other", cls: "", fn: () => lookAfterScreen(null, "Back to the night") }] : []),
     { label: "📄 Terms & privacy", cls: "", fn: legalSheet },

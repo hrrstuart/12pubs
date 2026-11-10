@@ -35,14 +35,30 @@ export function displayName(S, n, hide) {
 }
 
 /* ---------------- numbers ---------------- */
+// Nights made before challenges became optional always had them
+export const challengesOn = (S) => S.settings.challenges ?? true;
+// A catch with no other reason is someone breaking the rule (missions and busts have a reason)
+const ruleCatches = (S) => (S.catches || []).filter((c) => !c.why);
+// Every pub you got to that had a rule: what it was, how often it got broken, and who it got most
+export function ruleBreaks(S) {
+  const cs = ruleCatches(S);
+  return S.plan.map((p, i) => ({ ...p, i })).filter((p) => p.arrivedAt && p.type === "rule" && p.rule).map((p) => {
+    const here = cs.filter((c) => c.pub === p.i), count = {};
+    for (const c of here) count[c.playerId] = (count[c.playerId] || 0) + 1;
+    const most = Math.max(0, ...Object.values(count)), ids = Object.keys(count).filter((id) => count[id] === most);
+    return { i: p.i, name: p.name, text: p.rule.text, by: p.rule.by || null, n: here.length,
+      // only worth naming if they were caught more than once and it's not a crowd
+      downfall: most >= 2 && ids.length <= 2 ? { ids, n: most } : null };
+  });
+}
 export function nightStats(S) {
   const visited = S.plan.map((p, i) => ({ ...p, i })).filter((p) => p.arrivedAt);
   const end = S.endAt || Date.now();
   const stays = visited.map((p, k) => ({ name: p.name, ms: (k + 1 < visited.length ? visited[k + 1].arrivedAt : end) - p.arrivedAt }));
   const longest = stays.length > 1 ? stays.reduce((a, b) => (b.ms > a.ms ? b : a)) : null;
   const quickest = stays.length > 1 ? stays.slice(0, -1).reduce((a, b) => (b.ms < a.ms ? b : a)) : null; // the finale doesn't count
-  const rulePubs = visited.filter((p) => p.type === "rule");
-  const worst = rulePubs.reduce((a, b) => ((b.forf || 0) > (a ? a.forf || 0 : 0) ? b : a), null);
+  const rules = ruleBreaks(S);
+  const worst = rules.reduce((a, b) => (b.n > (a ? a.n : 0) ? b : a), null);
   let challenges = 0;
   for (const p of visited) for (const c of [p.arrive, p.drop]) if (c && c.state === "done") challenges++;
   const plants = (S.plants || []).filter((x) => x.status === "approved");
@@ -61,8 +77,12 @@ export function nightStats(S) {
     out: S.startAt ? end - S.startAt : 0,
     forfeits: S.players.reduce((a, p) => a + p.forf, 0),
     skips: S.players.reduce((a, p) => a + p.skips, 0),
+    // one drink each per pub you were actually there for (a water at the water stop counts too)
+    drinks: S.players.reduce((a, p) => a + attended(S, p), 0),
     challenges, longest, quickest, peak,
-    ruleThatGotYou: worst && worst.forf ? { text: worst.rule.text, pub: worst.name, n: worst.forf } : null,
+    rulesBroken: rules.reduce((a, r) => a + r.n, 0),
+    caught: new Set(ruleCatches(S).map((c) => c.playerId)).size,
+    ruleThatGotYou: worst && worst.n ? { text: worst.text, pub: worst.name, n: worst.n } : null,
   };
 }
 
@@ -262,7 +282,12 @@ export function titles(S) {
 export function recapText(S, hide) {
   const st = nightStats(S), tt = titles(S);
   const lines = [`🍻 ${S.settings.crew ? S.settings.crew + " · " : ""}12 Pubs · ${MODE_LABEL[S.settings.mode]} · ${duration(st.out)} out`, ""];
-  S.plan.forEach((p, i) => lines.push(`${i + 1}. ${p.name}${p.arrivedAt ? ` (${time(p.arrivedAt)})` : ""}`));
+  const rb = Object.fromEntries(ruleBreaks(S).map((r) => [r.i, r]));
+  S.plan.forEach((p, i) => {
+    lines.push(`${i + 1}. ${p.name}${p.arrivedAt ? ` (${time(p.arrivedAt)})` : ""}`);
+    const r = rb[i];
+    if (r) lines.push(`   📜 ${r.by ? `${displayName(S, r.by, hide)}'s rule: ` : ""}${r.text} · ${r.n ? `broken ${r.n}×` : "nobody broke it"}`);
+  });
   lines.push("", ...awards(S, hide).map((a) => `🏆 ${a.t}: ${a.n} (${a.d})`));
   lines.push("", ...S.players.map((p) => `${tt[p.id].em} ${displayName(S, p.n, hide)}: ${tt[p.id].t}${comingsAndGoings(S, p) ? ` (${comingsAndGoings(S, p).toLowerCase()})` : ""}`));
   if (S.settings.missions) {
@@ -414,6 +439,44 @@ function slideRoute(S) {
   return g.c;
 }
 
+function slideRules(S, hide) {
+  const list = ruleBreaks(S), total = list.reduce((a, r) => a + r.n, 0), most = Math.max(0, ...list.map((r) => r.n));
+  const g = canvas("#4ade80");
+  g.confetti([WHITE, "#ffd23f", INK, "#ff7eb6"], 50, 8);
+  g.sticker("📜 THE RULES", 80, 90);
+  const head = total ? `${plural(total, "rule")} broken.` : "Not one rule broken.";
+  let size = 96; g.x.font = F(700, size);
+  while (size > 60 && g.x.measureText(head).width > 920) { size -= 4; g.x.font = F(700, size); }
+  g.text(head, 80, 270, F(700, size));
+  // Rows fit their text; a long night falls back to equal rows so all nine fit
+  const top = 340, gap = 18, avail = H - top - 170;
+  const layout = (tall) => {
+    const nameSize = tall ? 36 : 30, ruleSize = tall ? 32 : 26, lh = Math.round(ruleSize * 1.25), ruleF = F(700, ruleSize, "Nunito");
+    const nameAt = nameSize + (tall ? 20 : 16), ruleAt = nameAt + ruleSize + (tall ? 18 : 16); // baselines from the top of the row
+    return list.map((r) => {
+      const text = `${r.by ? `🎁 ${displayName(S, r.by, hide)}'s: ` : ""}“${r.text}”`;
+      const lines = g.wrap(text, ruleF, 720, tall ? 3 : 2);
+      return { r, lines, nameSize, ruleF, lh, nameAt, ruleAt, h: ruleAt + (lines.length - 1) * lh + (tall ? 34 : 22) };
+    });
+  };
+  const stack = (rows) => rows.reduce((a, x) => a + x.h, 0) + gap * (rows.length - 1);
+  let rows = layout(true);
+  if (stack(rows) > avail) rows = layout(false);
+  if (stack(rows) > avail) { const h = (avail - gap * (rows.length - 1)) / rows.length; rows.forEach((x) => { x.h = h; x.lines = x.lines.slice(0, Math.max(1, Math.floor((h - x.ruleAt - 12) / x.lh) + 1)); }); }
+  let y = top;
+  for (const { r, lines, nameSize, ruleF, lh, nameAt, ruleAt, h } of rows) {
+    g.box(80, y, 920, h, 26, r.n && r.n === most ? "#ffd23f" : WHITE, 6); // the one that got you is yellow
+    const who = r.downfall ? ` · ${r.downfall.ids.map((id) => nameOf(S, id, hide)).join(" & ")}'s downfall` : "";
+    const nameF = F(700, nameSize);
+    g.text(g.fit(`${r.i + 1} · ${r.name}${who}`, nameF, 740), 120, y + nameAt, nameF);
+    lines.forEach((l, j) => g.text(l, 120, y + ruleAt + j * lh, ruleF));
+    g.text(r.n ? `${r.n}×` : "0", 960, y + h / 2 + 22, F(700, nameSize > 30 ? 68 : 56), r.n ? INK : "#7a7a7a", "right");
+    y += h + gap;
+  }
+  g.footer();
+  return g.c;
+}
+
 function slideNumbers(S) {
   const st = nightStats(S), g = canvas("#6ea8ff");
   g.confetti([WHITE, "#ffd23f", "#ff7eb6", INK], 50, 2);
@@ -421,9 +484,9 @@ function slideNumbers(S) {
   g.text("The damage.", 80, 280, F(700, 110));
   const tiles = [
     [duration(st.out), "out"],
-    [String(st.forfeits), "forfeits"],
-    [String(st.challenges), "challenges done"],
-    [String(st.skips), "skip tokens used"],
+    [String(st.rulesBroken), st.rulesBroken === 1 ? "rule broken" : "rules broken"],
+    challengesOn(S) ? [String(st.challenges), "challenges done"] : [`${st.caught} of ${S.players.length}`, "got caught"],
+    [String(st.drinks), "drinks, give or take"],
   ];
   tiles.forEach(([big, small], k) => {
     const X = 80 + (k % 2) * 470, Y = 360 + Math.floor(k / 2) * 290;
@@ -555,7 +618,9 @@ function slidePlayer(S, p, i, hide) {
   // stats
   const mission = S.settings.missions && p.mission ? (p.mission.result === true ? "✅" : p.mission.result === false ? "❌" : "–") : null;
   const pubs = attended(S, p);
-  const tiles = [[String(p.forf), p.forf === 1 ? "forfeit" : "forfeits"], [String(p.chall), p.chall === 1 ? "challenge" : "challenges"], [String(pubs), pubs === 1 ? "pub" : "pubs"]];
+  const tiles = [[String(p.forf), p.forf === 1 ? "forfeit" : "forfeits"]];
+  if (challengesOn(S)) tiles.push([String(p.chall), p.chall === 1 ? "challenge" : "challenges"]);
+  tiles.push([String(pubs), pubs === 1 ? "pub" : "pubs"]);
   tiles.push(mission ? [mission, "mission"] : [String(p.skips), "skips used"]);
   const tw = (920 - 24 * (tiles.length - 1)) / tiles.length;
   tiles.forEach(([big, small], k) => {
@@ -583,6 +648,7 @@ export async function buildSlides(S, hide, myId, photos = {}) {
   const group = [
     { key: "night", label: "The night", draw: () => slideCover(S, hide) },
     { key: "route", label: "The route", draw: () => slideRoute(S) },
+    ...(ruleBreaks(S).length ? [{ key: "rules", label: "The rules", draw: () => slideRules(S, hide) }] : []),
     { key: "numbers", label: "The numbers", draw: () => slideNumbers(S) },
     { key: "awards", label: "The awards", draw: () => slideAwards(S, hide) },
     ...(S.settings.missions ? [{ key: "missions", label: "Secret missions", draw: () => slideMissions(S, hide) }] : []),
