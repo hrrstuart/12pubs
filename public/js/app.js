@@ -247,6 +247,7 @@ function whatsWhat(on) {
     ["🎟", "Skip tokens", all ? "The host gives everyone 0, 1 or 2. Spend one to dodge a forfeit or a challenge." : `Everyone has ${on.tokens}. Spend one to dodge a forfeit${ch ? " or a challenge" : ""}.`],
     ["💧", "The stops", "Pub 4 is a water stop, pub 8 is a food stop, and pub 12 is the finale: all rules lifted."],
     ["🎁", "Planted surprises", `Before the first pub, anyone can plant up to 2 secret rules${ch ? " or challenges" : ""}. Each lands on a random pub and pops up 5 to 15 minutes in. Every catch under your rule counts for you.`],
+    ["💬", "Quote of the night", "Someone says something you'll never let them forget? Add it from the ⋯ menu, or on the recap at the end. One each, and your latest replaces your last. It goes on its own recap slide, and the host can bin any that cross a line."],
     ...(ch ? [["🎯", "Challenges" + opt, "A dare when you walk in, for one person or the whole group, and surprise ones dropped 10 to 20 minutes into some pubs. Do it, or spend a skip token."]] : []),
     ...(mi ? [["🤫", "Secret missions" + opt, "Everyone gets a secret job for the night. Pull it off and you give anyone a forfeit. With 5 or more of you, everyone writes one for someone else, and the writer gets 2 guesses to bust whoever has it. Guess wrong and the forfeit's yours."]] : []),
   ];
